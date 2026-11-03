@@ -390,6 +390,23 @@ def test_wiki_files_named_for_the_person_or_an_erased_entity_go_even_when_their_
     assert files.get("marisol_quintero_notes.md") == "remove" and files.get("lincoln_elementary.md") == "remove"
 
 
+def test_a_page_file_whose_row_is_gone_is_rebuilt_under_its_own_title(home):
+    """A page file for a kept entity that names her, with no wiki_pages row: rebuilt as "Dev Okafor", not as a
+    lower-case copy with a second row."""
+    from apolaki.agent import erase as X
+    plant(home)
+    con = sqlite3.connect(str(home / "db" / "apolaki.db"))
+    con.execute("DELETE FROM wiki_pages WHERE title = 'Dev Okafor'")
+    con.commit()
+    con.close()
+    p = X.plan(PERSON)
+    assert {f["file"]: (f["action"], f["title"]) for f in p.wiki_files}["dev_okafor.md"] == ("rebuild", "Dev Okafor")
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert (home / "wiki" / "dev_okafor.md").read_text().startswith("# Dev Okafor\n")
+    assert [r[0] for r in db_rows(home, "SELECT title FROM wiki_pages WHERE lower(title) = 'dev okafor'")] == \
+        ["Dev Okafor"]
+
+
 def test_a_belief_file_that_cant_be_read_stops_the_erase_before_anything_changes(home):
     from apolaki.agent import erase as X
     plant(home)

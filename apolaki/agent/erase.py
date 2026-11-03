@@ -183,10 +183,6 @@ def _open(db: Path, readonly: bool):
     return con, vec
 
 
-def _table_exists(con, name: str) -> bool:
-    return con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
-
-
 def _wiki_name(title: str) -> str:
     """The file name ApolakiMemoryStore.generate_wiki_page gives a page."""
     return title.lower().replace(" ", "_").replace("/", "_") + ".md"
@@ -244,7 +240,8 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
                 "SELECT id, subject_entity_id, object_entity_id, source_memory_id FROM kg_triples")
                 if r[1] in gone_ents or r[2] in gone_ents or r[3] in erased_mem)
             gone_names = {ents[e][1].lower() for e in gone_ents if e in ents}
-            kept_names = {r[1].lower() for e, r in ents.items() if e not in gone_ents}
+            kept = {r[1] for e, r in ents.items() if e not in gone_ents}           # as written: page titles keep case
+            kept_names = {n.lower() for n in kept}
             for (title, content) in con.execute("SELECT title, content FROM wiki_pages ORDER BY title"):
                 if title.lower() in gone_names or named(title):
                     out.wiki_pages.append({"title": title, "action": "remove"})
@@ -254,10 +251,10 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
         finally:
             con.close()
     else:
-        gone_names, kept_names = set(), set()
+        gone_names, kept = set(), set()
 
     page_action = {_wiki_name(w["title"]): w for w in out.wiki_pages}
-    kept_by_file = {_wiki_name(n): n for n in kept_names}
+    kept_by_file = {_wiki_name(n): n for n in kept}
     if p["wiki"].is_dir():
         for f in sorted(p["wiki"].rglob("*")):
             if not f.is_file():
@@ -378,7 +375,7 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
     hit = _matcher(names)
     paths = _paths(home)
     blobs: list[bytes] = []
-    if p.memories or p.entities or p.mentions or p.triples or p.wiki_pages:
+    if paths["db"].is_file():
         con, vec = _open(paths["db"], readonly=False)
         try:
             con.execute("PRAGMA secure_delete = ON")
@@ -413,7 +410,7 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
             con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         finally:
             con.close()
-    elif p.wiki_files:
+    else:                                    # no database: nothing to rebuild a page from
         for f in p.wiki_files:
             (paths["wiki"] / f["file"]).unlink(missing_ok=True)
 
