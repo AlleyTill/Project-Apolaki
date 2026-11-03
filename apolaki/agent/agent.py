@@ -27,6 +27,8 @@ Context engineering, from Vera's 2026-09-23 audit:
 """
 from __future__ import annotations
 
+import glob
+import hashlib
 import json
 import logging
 import os
@@ -165,26 +167,73 @@ def _own_ethics_check(content: str) -> tuple[str, str]:
 
 # ── Approval Queue ──
 
+# The queue's own fields. A caller's extra fields go beside them and can't replace them: extra used to be merged last,
+# so extra={"content": ...} would have written text that neither the ethics check nor the hash had seen.
+QUEUE_FIELDS = ("id", "content", "content_type", "context", "status", "created_at",
+                "ethics_verdict", "ethics_reason", "content_sha256")
+
+
+def content_sha256(content: str) -> str:
+    """The hash an approval is bound to: sha256 of the content's UTF-8 bytes, as hex."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _queue_paths(item_id: str) -> list[Path]:
+    """The queue files whose recorded id is exactly item_id (a file named <id>_<type>.json; the id alone decides, so
+    "20261102_200000" never matches "20261102_200000_2")."""
+    out = []
+    for p in sorted(config.folder("approval-queue").glob(f"{glob.escape(item_id)}_*.json")):
+        try:
+            if json.loads(p.read_text()).get("id") == item_id:
+                out.append(p)
+        except (OSError, ValueError, AttributeError):
+            continue
+    return out
+
+
 def queue_for_approval(content: str, content_type: str, context: str = "",
                        extra: dict | None = None) -> str:
-    """Save content to approval queue. Returns queue item ID."""
-    item_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    """Save content to approval queue. Returns queue item ID.
+
+    The item records content_sha256, the hash of the exact text queued and checked. review_item recomputes it and
+    won't record an approval when the text has changed since (2026-11-02 review: an item edited on disk after queueing
+    used to be approved as edited). What that catches: the content changed after queueing by anything that doesn't
+    also rewrite the hash. It is not a signature: whoever can write the queue folder can rewrite both.
+
+    The id is the second the item was queued in; a second item in the same second gets "_2", "_3" rather than
+    replacing the first item's file."""
+    clash = sorted(set(extra or {}) & set(QUEUE_FIELDS))
+    if clash:
+        raise ValueError(f"extra can't set the queue's own fields: {clash}")
     verdict, reason = ethics_check(content)
+    now = datetime.now(timezone.utc)
     item = {
-        "id": item_id,
+        "id": "",
         "content": content,
         "content_type": content_type,
         "context": context,
         "status": "pending",
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": now.isoformat(),
         "ethics_verdict": verdict,
         "ethics_reason": reason,
+        "content_sha256": content_sha256(content),
     }
     if extra:
         item.update(extra)
-    path = config.folder("approval-queue") / f"{item_id}_{content_type}.json"
-    path.write_text(json.dumps(item, indent=2, ensure_ascii=False))
-    return item_id
+    base, n = now.strftime("%Y%m%d_%H%M%S"), 1
+    while True:
+        item_id = base if n == 1 else f"{base}_{n}"
+        n += 1
+        if _queue_paths(item_id):
+            continue
+        item["id"] = item_id
+        path = config.folder("approval-queue") / f"{item_id}_{content_type}.json"
+        try:
+            with open(path, "x", encoding="utf-8") as f:
+                f.write(json.dumps(item, indent=2, ensure_ascii=False))
+        except FileExistsError:
+            continue
+        return item_id
 
 
 def list_queue() -> list[dict]:
@@ -209,19 +258,86 @@ THINK_TIMEOUT_S = 1200  # a chat() call with thinking on (see chat())
 REVIEW_DECISIONS = ("approved", "rejected", "changes_requested")
 
 
-def review_item(item_id: str, decision: str, note: str = "", reviewer: str = "") -> dict:
-    """Record a person's decision on a queue item. Until 2026-10-16 nothing did: every item stayed "pending", so no
-    decision was ever on record for the agent to learn from. Returns the updated item."""
-    if decision not in REVIEW_DECISIONS:
-        raise ValueError(f"decision must be one of {REVIEW_DECISIONS}, not {decision!r}")
-    matches = sorted(config.folder("approval-queue").glob(f"{item_id}_*.json"))
+def _single_item(item_id: str) -> tuple[Path, dict]:
+    matches = _queue_paths(item_id)
     if len(matches) != 1:
         raise ValueError(f"no single queue item with id {item_id!r} ({len(matches)} found)")
-    item = json.loads(matches[0].read_text())
-    item.update(status=decision, review_note=note.strip(), reviewed_by=reviewer.strip(),
-                reviewed_at=datetime.now(timezone.utc).isoformat())
-    matches[0].write_text(json.dumps(item, indent=2, ensure_ascii=False))
+    return matches[0], json.loads(matches[0].read_text())
+
+
+def review_item(item_id: str, decision: str, note: str = "", reviewer: str = "", override: str = "") -> dict:
+    """Record a person's decision on a queue item. Until 2026-10-16 nothing did: every item stayed "pending", so no
+    decision was ever on record for the agent to learn from. Returns the updated item.
+
+    An approval is of the exact text that was queued (2026-11-02 review). Before recording "approved" this:
+      - recomputes the content's sha256 and refuses when it differs from the content_sha256 recorded at queueing, or
+        when the item has none (queued before 2026-11-02): re-queue it (requeue_item) and review the new item;
+      - refuses a superseded item (review the one that superseded it);
+      - refuses an item the ethics check blocked, unless override says why and reviewer says who. Blocked means the
+        verdict stored at queueing or the check run again now on the text being approved, whichever is stricter; the
+        override is recorded on the item (ethics_override) with the note, who, when and the block it overrode.
+    The approval records approved_content_sha256, so anything that later acts on an approval can check it has the
+    text that was approved. Nothing is recorded when a check refuses. Rejections and change requests are recorded
+    whatever the text: they vouch for nothing."""
+    if decision not in REVIEW_DECISIONS:
+        raise ValueError(f"decision must be one of {REVIEW_DECISIONS}, not {decision!r}")
+    if override.strip() and decision != "approved":
+        raise ValueError("an override note applies only to an approval")
+    path, item = _single_item(item_id)
+    now = datetime.now(timezone.utc).isoformat()
+    record = {}
+    if decision == "approved":
+        if item.get("status") == "superseded":
+            raise ValueError(f"{item_id} was superseded by {item.get('superseded_by')}; review that item instead")
+        requeue = f"python -m apolaki.engine requeue {item_id}"
+        recorded = item.get("content_sha256")
+        if not recorded:
+            raise ValueError(f"{item_id} was queued before approvals were bound to the exact draft (it has no "
+                             f"content_sha256), so what it holds now can't be shown to be what was queued. Nothing "
+                             f"was recorded. To approve its text, re-queue it and review the new item: {requeue}")
+        content = item.get("content")
+        current = content_sha256(content) if isinstance(content, str) else "not text"
+        if current != recorded:
+            raise ValueError(f"{item_id}'s content has changed since it was queued (sha256 {recorded[:12]} then, "
+                             f"{current[:12]} now). Nothing was recorded. Re-queue it so the text you approve is the "
+                             f"text that was checked: {requeue}")
+        stored = (item.get("ethics_verdict"), item.get("ethics_reason", ""))
+        now_check = ethics_check(content)
+        blocks = [v for v in (now_check, stored) if v[0] == "blocked"]
+        if blocks:
+            reason = blocks[0][1]
+            if not override.strip():
+                raise ValueError(f"{item_id} was blocked by the ethics check ({reason}). Nothing was recorded. "
+                                 f"Approving it needs an override note saying why (override=..., --override) and "
+                                 f"who made it (reviewer=..., --by)")
+            if not reviewer.strip():
+                raise ValueError("an ethics override must say who made it (reviewer=..., --by)")
+            record["ethics_override"] = {"note": override.strip(), "by": reviewer.strip(), "at": now,
+                                         "verdict": "blocked", "reason": reason}
+        record["approved_content_sha256"] = current
+    item.update(status=decision, review_note=note.strip(), reviewed_by=reviewer.strip(), reviewed_at=now, **record)
+    path.write_text(json.dumps(item, indent=2, ensure_ascii=False))
     return item
+
+
+def requeue_item(item_id: str) -> str:
+    """Queue an item's current text as a new item, and mark the old one superseded. Returns the new id.
+
+    This is the way to approve text a person edited in the queue file: the new item gets its own ethics check, hash
+    and style lint, records requeued_from, and carries the old item's content type and context. The old item keeps
+    its fields, with status "superseded", status_before and superseded_by."""
+    path, old = _single_item(item_id)
+    if old.get("status") == "superseded":
+        raise ValueError(f"{item_id} was superseded by {old.get('superseded_by')} already")
+    content = old.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError(f"{item_id} has no text to re-queue")
+    new_id = queue_for_approval(content, old.get("content_type") or "unknown", context=old.get("context") or "",
+                                extra={"requeued_from": item_id, "style": lint_summary(lint_draft(content))})
+    old.update(status_before=old.get("status"), status="superseded", superseded_by=new_id,
+               superseded_at=datetime.now(timezone.utc).isoformat())
+    path.write_text(json.dumps(old, indent=2, ensure_ascii=False))
+    return new_id
 
 
 def _parse_chat_response(data: dict) -> tuple[str, dict]:

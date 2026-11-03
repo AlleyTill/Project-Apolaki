@@ -13,7 +13,8 @@
   belief and the model sees no feedback; `sync` still records decisions when a person runs it.
 
     python -m apolaki.engine draft "BRIEF" [--type social] [--max-tokens N] [--learn]
-    python -m apolaki.engine review QUEUE_ID approved|rejected|changes_requested ["NOTE"] [--by NAME]
+    python -m apolaki.engine review QUEUE_ID approved|rejected|changes_requested ["NOTE"] [--by NAME] [--override WHY]
+    python -m apolaki.engine requeue QUEUE_ID   # an edited item becomes a new item, with its own check and hash
     python -m apolaki.engine sync            # turn recorded decisions into beliefs
 """
 from __future__ import annotations
@@ -197,11 +198,21 @@ def main(argv=None) -> int:
     r.add_argument("decision", choices=("approved", "rejected", "changes_requested"))
     r.add_argument("note", nargs="?", default="")
     r.add_argument("--by", default="")
+    r.add_argument("--override", default="", help="to approve an item the ethics check blocked: why (needs --by)")
+    q = sub.add_parser("requeue", help="queue an item's current (edited) text as a new item for review")
+    q.add_argument("queue_id")
     sub.add_parser("sync")
     a = ap.parse_args(argv)
-    if a.cmd == "review":
-        from .agent.agent import review_item
-        item = review_item(a.queue_id, a.decision, a.note, a.by)
+    if a.cmd in ("review", "requeue"):
+        from .agent import agent as A
+        try:
+            if a.cmd == "requeue":
+                print(f"{a.queue_id}: superseded by {A.requeue_item(a.queue_id)} (pending review)")
+                return 0
+            item = A.review_item(a.queue_id, a.decision, a.note, a.by, override=a.override)
+        except ValueError as e:      # a refusal: nothing was recorded
+            print(f"not recorded: {e}", file=sys.stderr)
+            return 2
         print(f"{item['id']}: {item['status']}")
         return 0
     engine = ApolakiEngine(learn=getattr(a, "learn", False))

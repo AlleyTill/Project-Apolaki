@@ -25,8 +25,12 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
     deceptive or inflated metrics.
   - *Sent for human review:* large financial asks, instructions to publish or post on the organization's behalf,
     sensitive political topics, sharing data with outside parties.
-- **An approval queue.** Nothing is published by Apolaki. Every draft lands in the queue with its ethics verdict
-  and lint results, and a person approves it. An optional Discord hook posts each item to a review channel.
+- **An approval queue.** Nothing is published by Apolaki. Every draft lands in the queue with its ethics verdict,
+  its lint results and the sha256 of its text, and a person approves it. An approval is of that exact text: if the
+  text has changed since it was queued, the approval is refused until the item is re-queued as a new item with its
+  own check, and an item the ethics check blocked is approved only with an override note saying why and who, which
+  is recorded on the item. The hash catches edits by anything that doesn't also rewrite it; it is not a signature.
+  An optional Discord hook posts each item to a review channel.
 - **It learns from its reviewers.** A reviewer's decision (approved, rejected, changes requested, with a note) is
   recorded on the queue item, and the Kintsugi engine keeps each one as a belief. The recent notes for a content type
   go to the model with the next brief of that type, as reference material beside memory. They never go into the
@@ -56,6 +60,7 @@ mkdir -p ~/.apolaki
 cp brand.example.json ~/.apolaki/brand.json   # then make it yours: name, voice, reviewers
 python -m apolaki.engine draft "BRIEF" --type social     # one draft, through the engine
 python -m apolaki.engine review QUEUE_ID rejected "NOTE"  # record a reviewer's decision
+python -m apolaki.engine requeue QUEUE_ID                 # an edited item becomes a new item to review
 python -m apolaki.agent.agent                 # the interactive agent
 python -m apolaki.agent.style_pass draft.md   # the judgement pass on a finished piece
 python -m apolaki.agent.fact_checker draft.md # the fact checker
