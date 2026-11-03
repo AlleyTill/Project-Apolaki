@@ -19,7 +19,8 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   revision pass, and both lint results travel with it.
 - **Two review tools you run on a finished piece:** a judgement pass on content patterns, claims discipline and
   register (`style_pass`), and a hostile fact checker that pulls out every statistic and citation and marks the ones
-  with no source as suspect (`fact_checker`).
+  with no source as suspect (`fact_checker`). The checker reads the whole piece, in parts when it is long, and says
+  plainly which characters went unchecked when a part fails.
 - **Two ethics checks, and the stricter one wins.**
   - *Blocked:* false urgency, guilt manipulation, astroturfing (pretending to be a customer or supporter), spam,
     deceptive or inflated metrics.
