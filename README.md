@@ -59,6 +59,11 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
 - **Runs on the Kintsugi engine.** Each request is a BDI intention carried out by a skill chip from a Kintsugi skill
   registry (Rivet's pattern). Kintsugi's BDI and skill modules are vendored, so a bare install works, and a Kintsugi
   checkout (`KINTSUGI_PATH`) takes precedence when there is one.
+- **A grant outcome log.** `python -m apolaki.grants outcome KEY applied|awarded|declined|no_reply --date D --by NAME`
+  appends what happened to an application to `grant-hunt/outcomes.jsonl`, beside the grant hunt's seen-list, with
+  one primary reason and its source when there is one (no reason without a source). `python -m apolaki.grants
+  outcomes` summarises it in counts with n, never percentages, and says when fewer than five decided outcomes make
+  it a signal to watch rather than a finding. A person fills it in; nothing reads it into triage or learning.
 - **A STOP file.** `python -m apolaki.stop now "WHY" --by NAME` writes `$APOLAKI_HOME/STOP`: while it exists the
   engine starts no draft and learns nothing, and a scheduled job that checks it stops before its next step. It can't
   stop a step already running, or a job that never checks it; [docs/STOPPING.md](docs/STOPPING.md) has the whole
@@ -89,6 +94,8 @@ python -m apolaki.engine draft "BRIEF" --type social     # one draft, through th
 python -m apolaki.engine review QUEUE_ID rejected "NOTE"  # record a reviewer's decision
 python -m apolaki.engine requeue QUEUE_ID                 # an edited item becomes a new item to review
 python -m apolaki.stop now "WHY" --by NAME                # stop scheduled work at its next step (docs/STOPPING.md)
+python -m apolaki.grants outcome KEY declined --date D --by NAME --reason WHY --source WHERE
+python -m apolaki.grants outcomes                         # grant outcomes in counts with n
 python -m apolaki.agent.agent                 # the interactive agent (/rule TEXT adds a house rule)
 python -m apolaki.agent.style_pass draft.md   # the judgement pass on a finished piece
 python -m apolaki.agent.fact_checker draft.md # the fact checker
