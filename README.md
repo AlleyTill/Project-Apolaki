@@ -22,23 +22,29 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   with no source as suspect (`fact_checker`). The checker reads the whole piece, in parts when it is long, and says
   plainly which characters went unchecked when a part fails.
 - **Two ethics checks, and the stricter one wins.**
-  - *Blocked:* false urgency, guilt manipulation, astroturfing (pretending to be a customer or supporter, or writing
-    reviews and testimonials in their name), spam, deceptive or inflated metrics, review manipulation (five-star
-    asks, rewards for good reviews, asking only the happy customers, prewritten reviews), consent bypass (pre-checked
-    boxes, adding or emailing people without asking), undisclosed ads, pricing tricks (a former price never charged,
-    decoy tiers, door-in-the-face), and inferring people's health, faith, politics, sexuality, ethnicity or finances.
+  - *Blocked:* false urgency, guilt manipulation, confirmshaming (a decline option worded to shame), astroturfing
+    (pretending to be a customer or supporter, or writing or inventing reviews and testimonials in their name), spam
+    (the law, CAN-SPAM, and the spam folder can be named), deceptive or inflated metrics, review manipulation
+    (five-star asks, rewards for good reviews, asking only the happy customers, prewritten reviews), consent bypass
+    (pre-checked boxes, adding or emailing people without asking), undisclosed ads, pricing tricks (a former price
+    never charged, decoy tiers, door-in-the-face), and inferring people's health, faith, politics, sexuality,
+    ethnicity or finances.
   - *Sent for human review:* amounts of $1,000 or more however they are written ("$5,000", "$1.2M", "50,000 USD"),
     other financial asks, instructions to publish or post on the organization's behalf, sensitive political topics,
-    sharing data with outside parties, claimed scarcity and lapse deadlines, rewards for reviews, and targeting by a
-    sensitive trait.
-  - They are patterns, and patterns have limits: they can't see negation (a brief saying "no fake testimonials" is
-    blocked) or catch a paraphrase they weren't written for. The known misses are kept as expected failures in
+    sharing data with outside parties, claimed scarcity and lapse deadlines, rewards for reviews, targeting by a
+    sensitive trait or condition ("people with depression"), and tracking people for ads (custom or lookalike
+    audiences made from a list, retargeting, tracking pixels, fingerprinting).
+  - They are patterns, and patterns have limits: they see only the negations they were written for ("no fake
+    testimonials" and "We never spam you" pass; "Delete the spam comments" is still blocked), and they can't catch a
+    paraphrase they weren't written for. The known misses are kept as expected failures in
     `tests/test_red_team_probes.py`. The person who approves the draft is the check that holds.
   - Both read normalised text: curly quotes are straightened, invisible characters removed and look-alike letters
     (fullwidth, Cyrillic, accented) folded first, so "Don’t miss out" typed on a phone is read as "Don't miss out".
   - They run on every brief before the model is called, on every draft, and in the interactive chat on each message
-    (a blocked message never reaches the model) and on each reply. A blocked reply gets one revision, checked again;
-    if it is still blocked, the chat answers with a refusal and the reason, never the blocked text.
+    and on each reply. In chat a message is also read together with the person's last six messages, since the model
+    reads them together and a request split across turns passes a check of each half (a blocked message never
+    reaches the model). A blocked reply gets one revision, checked again; if it is still blocked, the chat answers
+    with a refusal and the reason, never the blocked text.
 - **Outside text is screened before anything uses it.** Layer 1 of
   [Garuda](https://github.com/Liberation-Labs-THCoalition/Project-Garuda), our injection screen, is vendored in
   `apolaki/security/garuda` (its notice kept beside it). Every brief is screened before its ethics check and before
@@ -72,10 +78,11 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
 - **A person can be erased from its memory.** `python -m apolaki.engine erase-person "NAME" [--alias ...]` lists
   everything that names them (memories with their embeddings, entities, graph rows, wiki pages, engine beliefs) and
   every other file the name is in; with the dry run's code it removes exactly that, rebuilds what depended on it,
-  compacts the database and checks byte by byte that the name is gone. It finds people by the names given, and it
-  leaves records that aren't memory (the approval queue, grant files, the quarantine) for a person to handle.
-  [docs/DATA_LIFECYCLE.md](docs/DATA_LIFECYCLE.md) says what Apolaki keeps, about whom, for how long (until a person
-  removes it) and who can erase it.
+  compacts the database and checks that the name is gone: every text column of every table, escapes decoded, and the
+  database files byte by byte. A trace left, or a step that failed, is reported as an incomplete erase. It finds
+  people by the names given, and it leaves records that aren't memory (the approval queue, grant files, the
+  quarantine) for a person to handle. [docs/DATA_LIFECYCLE.md](docs/DATA_LIFECYCLE.md) says what Apolaki keeps, about
+  whom, for how long (until a person removes it) and who can erase it.
 - **A grant outcome log.** `python -m apolaki.grants outcome KEY applied|awarded|declined|no_reply --date D --by NAME`
   appends what happened to an application to `grant-hunt/outcomes.jsonl`, beside the grant hunt's seen-list, with
   one primary reason and its source when there is one (no reason without a source). `python -m apolaki.grants

@@ -167,16 +167,25 @@ def test_a_draft_brief_in_the_history_is_read_with_the_next_message(monkeypatch)
     assert agent.respond(SPLIT[1]).startswith("[Refused") and calls == []
 
 
-def test_only_the_recent_window_is_read_together(monkeypatch):
-    """Earlier than RESPOND_WINDOW messages back, the half has left the window and no longer combines."""
+# A split whose pattern spans any distance on a line ("inflate ... impact numbers"), so only the window decides.
+FAR = ("Inflate it a little", "the impact numbers in the report")
+
+
+@pytest.mark.parametrize("between,blocked", [(-1, True), (0, False)], ids=["inside the window", "just outside it"])
+def test_only_the_recent_window_is_read_together(monkeypatch, between, blocked):
+    """RESPOND_WINDOW earlier messages are read with the new one: the first half combines while it is among them,
+    and not once it has left."""
     from apolaki.agent import agent as A
-    turns = A.RESPOND_WINDOW
+    assert all(A.ethics_check(half)[0] != "blocked" for half in FAR), "the setup lost its point"
+    turns = A.RESPOND_WINDOW + between
     calls = scripted_chat(monkeypatch, A, [CLEAN_REPLY] * (turns + 2))
     agent = make_agent(A)
-    agent.respond(SPLIT[0])
+    agent.respond(FAR[0])
     for i in range(turns):
         agent.respond(f"When does the clinic open on day {i}?")
-    assert agent.respond(SPLIT[1]) == CLEAN_REPLY and len(calls) == turns + 2
+    out = agent.respond(FAR[1])
+    assert out.startswith("[Refused") is blocked, out
+    assert len(calls) == turns + 1 + (not blocked)
 
 
 def test_a_refusal_in_the_history_doesnt_block_the_next_message(monkeypatch):

@@ -161,6 +161,7 @@ HONEST = [
     ("Explain it as if you were talking to a customer.", "approved"),
     ("Write the FAQ as though you were a customer support agent.", "approved"),
     ("Make up a name for the volunteer appreciation night.", "approved"),
+    ("Pose as a customer to test the checkout flow.", "approved"),
     ("Write an intro for the testimonial from Jane, a happy customer.", "approved"),
     # R5
     ("Our countdown to the conference starts today.", "approved"),
