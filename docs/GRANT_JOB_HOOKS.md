@@ -23,10 +23,13 @@ Some hold on their own once the package is installed; the others work only when 
 | When | Call | On a refusal |
 |---|---|---|
 | before each step (search, watchlist, each triage, each draft, each post) | `apolaki.stop.check("STEP")` | `StopRequested`: stop, post nothing more |
-| after fetching a listing's details, before triage | `apolaki.grants.intake.admit_listing(KEY, details)` | `None`: skip it this run; a person reads `python -m apolaki.intake list` |
+| after fetching a listing's details, before triage | `apolaki.grants.intake.admit_listing(KEY, {"hit": hit, "details": details})`: the search hit too, since triage reads its title | `None`: skip it this run; a person reads `python -m apolaki.intake list` |
 | after fetching a funder page, before a model reads it | `apolaki.grants.intake.admit_page(URL, text)` | `None`: skip the page |
 | for each call a model extracts from a page, before recording it | `admit_listing(KEY, call, kind="watchlist call")` | `None`: don't record it |
 | at the end of a run | `result["learning"]`, `result["watch"]` from each draft | report them in the summary |
+
+`admit_listing` screens every string in what it is given, at any depth (the applicant `types` list, nested dicts)
+and the dict keys, so pass everything a model will read from that listing in one call.
 
 Count what was quarantined in the run's summary, so the screen's work shows the same way the other gates do.
 

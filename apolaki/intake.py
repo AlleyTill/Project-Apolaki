@@ -23,7 +23,9 @@ model extracts from them); screen_discord() is for Discord input.
 
 What it can't do:
   - catch an injection it has no pattern for. Layer 1 is a list of known phrasings: a paraphrase, another language,
-    or an instruction split across fields gets through. Garuda's second layer, an LLM judge, isn't vendored.
+    or an instruction split across texts screened separately gets through (apolaki.grants.intake.admit_listing
+    screens all of a listing as one text, so a split inside one listing is seen). Garuda's second layer, an LLM
+    judge, isn't vendored.
   - tell discussion from attack. "jailbreak" in a call for AI-safety research is held like an attack, and a person
     releases it. Garuda's own design note: Layer 1 is deliberately aggressive, better to flag and release than miss.
   - screen text it isn't given. respond(), the interactive chat with the person at the keyboard, isn't screened.
