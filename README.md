@@ -69,6 +69,13 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
 - **Runs on the Kintsugi engine.** Each request is a BDI intention carried out by a skill chip from a Kintsugi skill
   registry (Rivet's pattern). Kintsugi's BDI and skill modules are vendored, so a bare install works, and a Kintsugi
   checkout (`KINTSUGI_PATH`) takes precedence when there is one.
+- **A person can be erased from its memory.** `python -m apolaki.engine erase-person "NAME" [--alias ...]` lists
+  everything that names them (memories with their embeddings, entities, graph rows, wiki pages, engine beliefs) and
+  every other file the name is in; with the dry run's code it removes exactly that, rebuilds what depended on it,
+  compacts the database and checks byte by byte that the name is gone. It finds people by the names given, and it
+  leaves records that aren't memory (the approval queue, grant files, the quarantine) for a person to handle.
+  [docs/DATA_LIFECYCLE.md](docs/DATA_LIFECYCLE.md) says what Apolaki keeps, about whom, for how long (until a person
+  removes it) and who can erase it.
 - **A grant outcome log.** `python -m apolaki.grants outcome KEY applied|awarded|declined|no_reply --date D --by NAME`
   appends what happened to an application to `grant-hunt/outcomes.jsonl`, beside the grant hunt's seen-list, with
   one primary reason and its source when there is one (no reason without a source). `python -m apolaki.grants
@@ -107,6 +114,7 @@ python -m apolaki.stop now "WHY" --by NAME                # stop scheduled work 
 python -m apolaki.grants outcome KEY declined --date D --by NAME --reason WHY --source WHERE
 python -m apolaki.grants outcomes                         # grant outcomes in counts with n
 python -m apolaki.intake list                             # outside text the screen quarantined, for a person
+python -m apolaki.engine erase-person "NAME"              # a dry run; then --confirm CODE --by WHO --reason WHY
 python -m apolaki.agent.agent                 # the interactive agent (/rule TEXT adds a house rule)
 python -m apolaki.agent.style_pass draft.md   # the judgement pass on a finished piece
 python -m apolaki.agent.fact_checker draft.md # the fact checker

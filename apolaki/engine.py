@@ -20,6 +20,7 @@
     python -m apolaki.engine review QUEUE_ID approved|rejected|changes_requested ["NOTE"] [--by NAME] [--override WHY]
     python -m apolaki.engine requeue QUEUE_ID   # an edited item becomes a new item, with its own check and hash
     python -m apolaki.engine sync            # turn recorded decisions into beliefs
+    python -m apolaki.engine erase-person NAME [--alias A] [--confirm CODE --by WHO --reason WHY]   # apolaki.agent.erase
 """
 from __future__ import annotations
 
@@ -241,7 +242,32 @@ def main(argv=None) -> int:
     q = sub.add_parser("requeue", help="queue an item's current (edited) text as a new item for review")
     q.add_argument("queue_id")
     sub.add_parser("sync")
+    x = sub.add_parser("erase-person", help="remove a person from Apolaki's memory (a dry run unless --confirm)")
+    x.add_argument("name")
+    x.add_argument("--alias", action="append", default=[], help="another form of the name; repeat for each")
+    x.add_argument("--confirm", default="", help="the code the dry run printed: erases exactly what it listed")
+    x.add_argument("--by", default="", help="who is erasing (needed with --confirm)")
+    x.add_argument("--reason", default="", help="why, for the erasure record (needed with --confirm; no names)")
     a = ap.parse_args(argv)
+    if a.cmd == "erase-person":
+        from .agent import erase as X
+        try:
+            if not a.confirm:
+                print(X.describe(X.plan(a.name, tuple(a.alias))))
+                return 0
+            done = X.erase(a.name, tuple(a.alias), confirm=a.confirm, by=a.by, reason=a.reason)
+        except X.EraseError as e:
+            print(f"not erased: {e}" if "check still reads" not in str(e) else f"ERASE INCOMPLETE: {e}",
+                  file=sys.stderr)
+            return 1 if "check still reads" in str(e) else 2
+        c = done["counts"]
+        print(f"erased: {c['memories']} memories, {c['entities']} entities, {c['mentions']} mentions, "
+              f"{c['triples']} triples, {c['wiki_pages']} wiki pages and {c['wiki_files']} wiki files touched, "
+              f"{c['beliefs']} beliefs; checked byte for byte; recorded in {done['ledger']} without the name")
+        if done["elsewhere"]:
+            print(f"still named in {len(done['elsewhere'])} file(s) that aren't memory (not touched): "
+                  + ", ".join(path for path, _ in done["elsewhere"]))
+        return 0
     if a.cmd in ("review", "requeue"):
         from .agent import agent as A
         try:

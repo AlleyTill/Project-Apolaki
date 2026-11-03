@@ -10,7 +10,8 @@ Runs entirely local on the Mac Studio.
   - memories.archived / archived_at / archive_reason columns (migrated in place).
     archive_memory() keeps the row and its embedding blob, removes the row from the
     vec index, and every read path (dense, graph, wiki, list_by_type) filters it.
-    unarchive_memory() reverses it. Nothing is hard-deleted.
+    unarchive_memory() reverses it. Nothing here hard-deletes; the one path that does is apolaki.agent.erase
+    (erase-person), for a person's data, since archiving keeps the row, its embedding and its graph entries.
   - _dense_search() applied the memory_type filter AFTER the vec LIMIT, so a
     type-filtered search could return fewer rows than asked for whenever other
     types ranked higher. It now over-fetches when a type filter is set.
