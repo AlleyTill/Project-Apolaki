@@ -45,10 +45,11 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   own check, and an item the ethics check blocked is approved only with an override note saying why and who, which
   is recorded on the item. The hash catches edits by anything that doesn't also rewrite it; it is not a signature.
   An optional Discord hook posts each item to a review channel.
-- **It learns from its reviewers.** A reviewer's decision (approved, rejected, changes requested, with a note) is
-  recorded on the queue item, and the Kintsugi engine keeps each one as a belief. The recent notes for a content type
-  go to the model with the next brief of that type, as reference material beside memory. They never go into the
-  brief itself, which is what the ethics check reads.
+- **It can learn from its reviewers, when that is switched on.** A reviewer's decision (approved, rejected, changes
+  requested, with a note) is recorded on the queue item. Learning is off by default; with it on (`--learn`), the
+  Kintsugi engine keeps each decision as a belief, and the recent notes for a content type go to the model with the
+  next brief of that type, as reference material beside memory. They never go into the brief itself, which is what
+  the ethics check reads.
 - **Runs on the Kintsugi engine.** Each request is a BDI intention carried out by a skill chip from a Kintsugi skill
   registry (Rivet's pattern). Kintsugi's BDI and skill modules are vendored, so a bare install works, and a Kintsugi
   checkout (`KINTSUGI_PATH`) takes precedence when there is one.
