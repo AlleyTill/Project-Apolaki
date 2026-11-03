@@ -449,10 +449,21 @@ def test_an_erase_whose_check_finds_the_name_is_an_error_not_a_success(home, mon
     from apolaki.agent import erase as X
     plant(home)
     monkeypatch.setattr(X, "leftovers", lambda names, home, blobs=(): ["somewhere: the name"])
-    with pytest.raises(X.EraseError, match="check still reads"):
+    with pytest.raises(X.EraseIncomplete, match="check still reads"):
         X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
     [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
     assert rec["verified"] is False
+
+
+def test_the_cli_says_an_erase_is_incomplete_and_exits_1_and_a_refusal_exits_2(home, monkeypatch, capsys):
+    import apolaki.engine as E
+    from apolaki.agent import erase as X
+    plant(home)
+    assert E.main(["erase-person", PERSON, "--confirm", "000000000000", "--by", "x", "--reason", "asked"]) == 2
+    assert "not erased" in capsys.readouterr().err
+    monkeypatch.setattr(X, "leftovers", lambda names, home, blobs=(): ["somewhere: the name"])
+    assert E.main(["erase-person", PERSON, "--confirm", X.plan(PERSON).code, "--by", "x", "--reason", "asked"]) == 1
+    assert "ERASE INCOMPLETE" in capsys.readouterr().err
 
 
 def test_a_reason_that_names_the_person_is_recorded_without_the_name(home):
@@ -460,6 +471,15 @@ def test_a_reason_that_names_the_person_is_recorded_without_the_name(home):
     plant(home)
     X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="Marisol Quintero asked by email")
     assert "arisol" not in (home / "erasures.jsonl").read_text().lower()
+
+
+def test_a_by_that_names_the_person_is_recorded_without_the_name_too(home):
+    """Both fields are checked: a reason and a by that both name her are both redacted."""
+    from apolaki.agent import erase as X
+    plant(home)
+    X.erase(PERSON, confirm=X.plan(PERSON).code, by="Marisol Quintero's assistant", reason="Marisol Quintero asked")
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["by"] == "[erased]" and rec["reason"] == "[erased]"
 
 
 def test_without_sqlite_vec_a_database_with_vector_indexes_is_refused(home, monkeypatch):
@@ -522,6 +542,21 @@ def bytes_naming_maria(home):
     return [b for b in MARIA_BYTES if b in raw]
 
 
+@pytest.mark.parametrize("tag,name", [
+    ("contact: " + MARIA, MARIA),
+    (json.dumps(["contact: " + MARIA]), MARIA),                  # escaped twice: two backslashes on disk
+    ("contact: \U0001d40carisol Quintero", PERSON),              # a mathematical bold M: a surrogate pair, escaped
+    ("contact: Marisol\nQuintero", PERSON),                      # a line break, escaped as backslash-n
+], ids=["accents", "escaped twice", "astral letter", "escaped line break"])
+def test_a_name_in_escaped_tags_is_found(home, tag, name):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    tagged = s.store("Volunteer list reviewed.", tags=[tag])
+    s.store("Brand voice: plain and warm.")
+    s.close()
+    assert [m["id"] for m in X.plan(name).memories] == [tagged]
+
+
 def test_a_name_in_non_ascii_tags_is_found_and_erased(home):
     """store() writes tags with json.dumps, which escapes every non-ASCII letter: L\\u00f3pez on disk."""
     from apolaki.agent import erase as X
@@ -581,6 +616,7 @@ def test_a_table_the_erase_doesnt_know_stops_it_before_anything_changes(home):
     ("body", "Call Marisol Quintero about the appeal."),
     ("body", '["contact: Mar\\u00eda L\\u00f3pez"]'),                  # JSON-escaped, as store() writes tags
     ("body", "Marisol\u00a0Quintero"),                                   # a no-break space
+    ("body", "Call Marisol Quintero about the appeal.".encode()),        # text kept as a blob
 ])
 def test_the_check_reads_every_column_of_every_table(home, column, value):
     from apolaki.agent import erase as X
@@ -634,6 +670,76 @@ def test_a_kept_longer_word_that_contains_the_name_is_not_taken_for_it(home):
     except X.EraseError as e:
         pytest.fail(f"a kept longer name was taken for hers: {e}")
     assert other in {r[0] for r in db_rows(home, "SELECT id FROM memories")}
+
+
+def test_a_file_outside_memory_with_the_name_escaped_is_listed(home):
+    """The grant hunt's files are written with json.dumps defaults, which escape non-ASCII letters."""
+    from apolaki.agent import erase as X
+    open_store(home).close()
+    (home / "grant-hunt").mkdir()
+    (home / "grant-hunt" / "seen.json").write_text(json.dumps({"OPP-1": {"contact": MARIA}}))
+    assert "\\u00f3" in (home / "grant-hunt" / "seen.json").read_text(), "the setup lost its point"
+    assert [path for path, _ in X.plan(MARIA).elsewhere] == ["grant-hunt/seen.json"]
+
+
+def test_the_check_reads_the_belief_log_with_escapes_decoded(home):
+    from apolaki.agent import erase as X
+    open_store(home).close()
+    (home / "engine_beliefs_log.jsonl").write_text(json.dumps({"kind": "added", "content": "Quote " + MARIA}) + "\n")
+    found = X.leftovers([MARIA], home)
+    assert any(f.endswith("engine_beliefs_log.jsonl: the name") for f in found), found
+
+
+def test_a_rollback_journal_left_beside_the_database_is_read(home):
+    """A database used in rollback-journal mode (or left by a crash) can have a -journal file holding old pages."""
+    from apolaki.agent import erase as X
+    open_store(home).close()
+    (home / "db" / "apolaki.db-journal").write_bytes(b"\x00" * 512 + b"old page: Marisol Quintero leads the union.")
+    assert any(f.endswith("apolaki.db-journal: the name") for f in X.leftovers([PERSON], home))
+
+
+def test_a_graph_row_that_names_her_only_in_its_own_text_goes_and_its_rows_stay(home):
+    """A mention whose context, or a triple whose predicate, names her between rows that don't: that row goes, the
+    kept memory and entities stay."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    kept = s.store("Dev Okafor runs the food bank at Harbor Hall.")
+    s.close()
+    con = raw_db(home)
+    dev, hall = (con.execute("SELECT id FROM kg_entities WHERE name = ?", (n,)).fetchone()[0]
+                 for n in ("Dev Okafor", "Harbor Hall"))
+    con.execute("DELETE FROM kg_entity_mentions WHERE entity_id = ?", (dev,))
+    con.execute("INSERT INTO kg_entity_mentions (id, entity_id, memory_id, mention_context) VALUES (?,?,?,?)",
+                ("men-1", dev, kept, "Dev Okafor, whom Marisol Quintero trained"))
+    con.execute("INSERT INTO kg_triples (id, subject_entity_id, predicate, object_entity_id, source_memory_id, "
+                "created_at) VALUES (?,?,?,?,?,?)", ("tri-1", dev, "trained_by_marisol_quintero", hall, kept, "2026"))
+    con.commit()
+    con.close()
+    p = X.plan(PERSON)
+    assert "men-1" in p.mentions and "tri-1" in p.triples and p.memories == [] and p.db_other == []
+    try:
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    except X.EraseError as e:
+        pytest.fail(f"the erase didn't complete: {e}")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+    assert {r[0] for r in db_rows(home, "SELECT name FROM kg_entities")} == {"Dev Okafor", "Harbor Hall"}
+    assert not db_rows(home, "SELECT id FROM kg_entity_mentions WHERE id = 'men-1'")
+    assert not db_rows(home, "SELECT id FROM kg_triples WHERE id = 'tri-1'")
+
+
+def test_a_table_without_rowids_is_read_too(home):
+    from apolaki.agent import erase as X
+    open_store(home).close()
+    con = raw_db(home)
+    con.execute("CREATE TABLE notes_by_name (name TEXT PRIMARY KEY, note TEXT) WITHOUT ROWID")
+    con.execute("INSERT INTO notes_by_name VALUES ('Marisol Quintero', 'call back')")
+    con.commit()
+    con.close()
+    try:
+        p = X.plan(PERSON)
+    except Exception as e:                       # noqa: BLE001 - a crash is a failure of the read, said as one
+        pytest.fail(f"a table without rowids broke the dry run: {e!r}")
+    assert p.db_other == [{"table": "notes_by_name", "column": "name", "rows": 1}]
 
 
 def test_a_chance_match_inside_a_kept_vector_is_not_taken_for_the_name(home):

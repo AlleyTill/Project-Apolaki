@@ -419,13 +419,14 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
                 "SELECT id, content, archived FROM memories ORDER BY created_at") if mid in named_mem]
             erased_mem = {m["id"] for m in mems}
             mention_rows = con.execute("SELECT id, entity_id, memory_id FROM kg_entity_mentions").fetchall()
-            gone_mentions = {r[0] for r in mention_rows if r[1] in person or r[2] in erased_mem
-                             or r[0] in in_table.get("kg_entity_mentions", ())}
-            # an entity whose every mention goes with the erased memories came only from them
+            with_memory = {r[0] for r in mention_rows if r[1] in person or r[2] in erased_mem}
+            gone_mentions = with_memory | (in_table.get("kg_entity_mentions", set()) & {r[0] for r in mention_rows})
+            # an entity whose every mention goes with the erased memories came only from them (a mention that goes
+            # only because its own context names the person leaves its entity's memory, and so the entity, in place)
             remaining = {}
             for mid_, eid, memid in mention_rows:
                 remaining.setdefault(eid, 0)
-                remaining[eid] += mid_ not in gone_mentions
+                remaining[eid] += mid_ not in with_memory
             orphans = {eid for eid, left in remaining.items() if left == 0 and eid not in person}
             gone_ents = person | orphans
             out.entities = [{"id": eid, "name": ents[eid][1], "type": ents[eid][2],
