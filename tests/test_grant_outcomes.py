@@ -28,12 +28,13 @@ def rows(home):
 
 def test_an_outcome_is_recorded_beside_the_seen_list(home):
     from apolaki.grants import outcomes as o
+    assert o.outcomes_path() == home / "grant-hunt" / "outcomes.jsonl"            # beside seen.json
     rec = o.record("OPP-1", "applied", "2026-10-20", by="the grants lead")
+    assert len(rows(home)) == 1
     [row] = rows(home)
     assert row == rec
     assert row["key"] == "OPP-1" and row["outcome"] == "applied" and row["date"] == "2026-10-20"
     assert row["by"] == "the grants lead" and row["recorded_at"]
-    assert o.outcomes_path() == home / "grant-hunt" / "outcomes.jsonl"
 
 
 def test_a_watchlist_key_works_too(home):
@@ -48,16 +49,16 @@ def test_a_key_the_hunt_never_saw_needs_unlisted(home):
         o.record("NOPE-1", "applied", "2026-10-20", by="x")
     assert rows(home) == []
     o.record("NOPE-1", "applied", "2026-10-20", by="x", unlisted=True)
-    assert rows(home)[0]["unlisted"] is True
+    assert rows(home)[0].get("unlisted") is True
 
 
 def test_without_a_seen_list_every_key_needs_unlisted(home):
     from apolaki.grants import outcomes as o
     (home / "grant-hunt" / "seen.json").unlink()
-    with pytest.raises(ValueError, match="seen.json"):
+    with pytest.raises(ValueError, match="there is no .*seen.json"):
         o.record("OPP-1", "applied", "2026-10-20", by="x")
     (home / "grant-hunt" / "seen.json").write_text("{not json")
-    with pytest.raises(ValueError, match="seen.json"):
+    with pytest.raises(ValueError, match="seen.json can't be read"):
         o.record("OPP-1", "applied", "2026-10-20", by="x")
     assert rows(home) == []
 
@@ -66,6 +67,8 @@ def test_without_a_seen_list_every_key_needs_unlisted(home):
     ({"outcome": "won"}, "outcome"),
     ({"date": "20/10/2026"}, "YYYY-MM-DD"),
     ({"date": "2026-02-30"}, "YYYY-MM-DD"),
+    ({"date": "20261020"}, "YYYY-MM-DD"),                  # fromisoformat takes this on 3.11+; the log doesn't
+    ({"date": "2026-W43-2"}, "YYYY-MM-DD"),
     ({"date": (date.today() + timedelta(days=1)).isoformat()}, "future"),
     ({"by": "  "}, "who"),
     ({"reason": "the budget was over the cap"}, "source"),
@@ -148,6 +151,8 @@ def test_since_counts_applications_whose_latest_record_falls_in_the_period(home)
     s = o.summary(since="2026-10-01")
     assert s["n"] == 2 and s["counts"] == {"awarded": 0, "declined": 0, "no_reply": 1, "applied": 1}
     assert "since 2026-10-01" in o.summary_text(s)
+    assert o.summary(since="2026-10-30")["n"] == 2                  # a record on the day itself counts
+    assert o.summary(since="2026-10-31")["n"] == 1
 
 
 def test_an_empty_log_says_so(home):
