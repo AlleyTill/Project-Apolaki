@@ -46,6 +46,8 @@ class EthicsCheck:
 _PERSONA = (r"(?:customer|client|user|donor|supporter|member|patient|buyer|guest|parent|student|volunteer|fan|reader|"
             r"attendee)")
 _PERSONS = _PERSONA[:-1] + r")s?"
+# Between the halves of "limited-time", "last-chance", "crossed-out": spaces, an ASCII hyphen or a Unicode one.
+_HY = r"[\s\-\u2010-\u2015]+"
 # Sensitive traits (marketingskills prospecting: never target or infer them).
 _TRAITS = (r"(?:health(?:\s+conditions?)?|medical|diagnos\w*|disabilit\w*|pregnan\w*|sexual(?:ity|\s+orientation)|"
            r"religio\w*|faith|political\s+(?:views?|leanings?|affiliations?)|politics|ethnicity|race|"
@@ -55,14 +57,14 @@ _DARK_PATTERNS = {
     "false_urgency": [
         # "Last chance to keep your monthly gift active", sent because a card really expired, is a lapse notice: it is
         # flagged for a person (urgency_claim), not blocked (2026-11-02 review, R5).
-        r"(last\s+chance(?!\s+to\s+(?:keep|renew|update|reactivate|restore)\s+your\b)|act\s+now|"
-        r"don't\s+miss\s+out|expires?\s+soon)",
-        r"(only\s+\d+\s+left|limited\s+time|hurry|before\s+it's\s+too\s+late)",
+        r"(last" + _HY + r"chance(?!\s+to\s+(?:keep|renew|update|reactivate|restore)\s+your\b)|act\s+now|"
+        r"(?:don't|dont|do\s+not)\s+miss\s+out|expires?\s+soon)",
+        r"(only\s+\d+\s+left|limited" + _HY + r"time|hurry|before\s+it's\s+too\s+late)",
         # A bare "countdown" blocked "Our countdown to the conference starts today" (R5); a fake or resetting one is
         # still blocked.
         r"(offer\s+ends|ticking\s+clock|midnight\s+tonight)",
         r"((?:fake|false|phony|resetting|evergreen)\s+(?:countdown|timer|deadline)s?|"
-        r"(?:countdown|timer)s?\s+that\s+resets?)",
+        r"(?:countdown|timer)s?\s+that\s+(?:resets?|restarts?|starts\s+over|reloads?|refreshes))",
     ],
     "guilt_manipulation": [
         r"(if\s+you\s+don't\s+(donate|help|act).*\b(suffer|die|starve))",
@@ -71,16 +73,57 @@ _DARK_PATTERNS = {
         r"(you're\s+the\s+only\s+one\s+who\s+can)",
     ],
     "astroturfing": [
-        r"(fake\s+(review|testimonial|endorsement|grassroots))",
+        r"(fake\s+grassroots)",
+        # Reviews and testimonials called invented, unless the words around say it is to forbid or catch them
+        # ("Our policy forbids fabricated reviews", "how to spot fake reviews").
+        r"(?<!\bno\s)(?<!\bnot\s)(?<!n't\s)(?<!\bnever\s)(?<!\bspot\s)(?<!\bdetect\s)(?<!\bflag\s)(?<!\breport\s)"
+        r"(?<!\bremove\s)(?<!\bagainst\s)(?<!\babout\s)(?<!\bavoid\s)(?<!\bforbid\s)(?<!\bforbids\s)"
+        r"(?<!\bban\s)(?<!\bbans\s)(?<!\bbanning\s)(?<!\bidentify\s)(?<!\bcombat\s)(?<!\bfight\s)"
+        r"\b(?:fake|fabricated|made" + _HY + r"up|invented|bogus|phony|phoney|sham|counterfeit|fictitious|fictional|"
+        r"imaginary|manufactured)\s+(?:\w+[\s-]+){0,2}?(?:reviews?|testimonials?|endorsements?|ratings?|quotes?)\b",
+        # Verbs that only ever mean inventing, as instructions: "Invent three testimonials", "Make up a quote from a
+        # customer". Their -ed and -ing forms, and "fake" (an adjective as often as a verb: "Fake three reviews" is
+        # caught above), are left to the pattern above, which knows "forbids fabricated reviews".
+        r"(?<!\bnever\s)(?<!\bnot\s)(?<!n't\s)"
+        r"\b(?:invents?|fabricates?|manufactures?|concocts?|(?:make|makes)\s+up|(?:cook|dream)s?\s+up)\s+"
+        r"(?:(?!about\b|for\b|of\b|on\b|to\b|that\b|names?\b|titles?\b|headings?\b|formats?\b|layouts?\b|"
+        r"designs?\b|sections?\b|pages?\b)\w+[\s-]+){0,4}?"
+        r"(?:reviews?|testimonials?|endorsements?|ratings?|quotes?\s+(?:from|by))\b",
+        # Writing reviews in the persona's name: "Write 5 glowing customer reviews". A reply to, a summary of, a
+        # request for, a page featuring, or a policy, section or template for reviews is not one.
+        r"\b(?:write|writes|writing|wrote|written|draft(?:s|ed|ing)?|generat(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|"
+        r"compos(?:e|es|ed|ing)|produc(?:e|es|ed|ing)|churn(?:s|ed|ing)?\s+out|crank(?:s|ed|ing)?\s+out|"
+        r"come\s+up\s+with)\s+"
+        r"(?:(?!ask|request|invit|collect|gather|solicit|encourag|repl|respon|summar|analy|about\b|to\b|of\b|"
+        r"for\b|on\b|that\b|with\b|from\b|using\b|featur|show|highlight|quot|includ|contain)\w+[\s-]+){0,4}?"
+        + _PERSONA + r"[\s-]+(?:reviews?|testimonials?|endorsements?|ratings?)\b"
+        r"(?![\s-]+(?:polic|guideline|section|page|widget|template|request|email|form|survey|program|process|"
+        r"strateg|summar|analys|report|dashboard|feed|carousel|module|block|plugin|integration|api\b|data\b|"
+        r"platform|tool|software|system|management|moderation|respon|repl|heading|title|intro|link|button|score|"
+        r"average|count|metric))",
+        r"\b(?:reviews?|testimonials?|endorsements?|quotes?)\b[^.]{0,40}\b(?:sound|read|look|seem)s?\s+"
+        r"(?:like|as\s+if|as\s+though)\s+(?:they|it|each|these)\s+(?:came|come|were|was|are|is)\s+"
+        r"(?:written\s+)?(?:from|by)\s+(?:\w+\s+){0,3}?" + _PERSONS + r"\b",
         r"(sock\s+puppet|astroturf|fake\s+account|impersonat)",
         r"(write\b.*\bas\s+if\s+you're\s+a\b.*\b(customer|user|supporter|donor|member))",
         r"(write\b.*\btestimonial\b.*\bas\s+if)",
         r"(pretend\s+to\s+be\s+a\s+(customer|user|supporter|donor))",
+        # Posing as one to write a review ("Pose as a happy client and write a review"); posing as a customer to
+        # test the checkout is not this.
+        r"\b(?:pretend(?:s|ed|ing)?\s+to\s+be|pos(?:e|es|ed|ing)\s+as|masquerad(?:e|es|ed|ing)\s+as)\s+"
+        r"(?:a|an|one\s+of\s+(?:our|the|my|their)|our|the)?\s*(?:\w+\s+){0,2}?" + _PERSONS + r"\b[^.]{0,40}"
+        r"\b(?:reviews?|testimonials?|endorse\w*|ratings?|rate\b|posts?|comments?)",
+        # "as if you were a customer", "as though it came from a donor"; not "as if you were talking to a customer"
+        # or "as though you were a customer support agent".
+        r"\bas\s+(?:if|though)\s+(?:you(?:'re|\s+(?:are|were|was))|it\s+(?:was|were|is|came)\s+(?:written\s+)?"
+        r"(?:from|by)|(?:it\s+was\s+)?written\s+by|from|by)\s+(?:a|an|one\s+of\s+(?:our|the|my|their)|our|the)?"
+        r"\s*(?:\w+\s+){0,2}?" + _PERSONS + r"(?![-\w])(?!\s+(?:service|support|success|care|experience|"
+        r"journey|agent|rep|representative|team|relations|base|data|list|segment|persona|interview)s?\b)",
         # Plainly asked-for invented reviews (R4): "Write five glowing reviews from happy clients". A reply to, a
         # summary of, or a request for real reviews is not one.
         r"\b(?:write|draft|generate|create|compose|invent|fabricate|make\s+up)\s+"
         r"(?:(?!ask|request|invit|collect|gather|solicit|encourag|repl|respon|summar|about\b|to\b|of\b|for\b|on\b|"
-        r"that\b)\w+[\s-]+){0,4}?(?:reviews?|testimonials?|endorsements?)\s+(?:from|by)\s+(?:\w+\s+){0,3}?"
+        r"that\b)\w+[\s-]+){0,4}?(?:reviews?|testimonials?|endorsements?)\s+(?:from|by)\s+(?:[\w']+,?\s+){0,3}?"
         + _PERSONS + r"\b",
         r"\bin\s+the\s+voice\s+of\s+(?:a|an|one\s+of\s+our)\s+(?:\w+\s+){0,2}?" + _PERSONS + r"\b",
         r"\bfrom\s+(?:a|an|one)\s+(?:\w+\s+){0,2}?" + _PERSONA + r"'s\s+(?:point\s+of\s+view|perspective|pov)\b",
@@ -115,6 +158,8 @@ _DARK_PATTERNS = {
         r"\b(?:send|email|e-mail|message|text|sms|add|subscribe|enrol|enroll|sign)\w*\b[^.]{0,80}"
         r"\b(?:lists?|everyone|all\s+(?:of\s+)?(?:our|the|my)\s+\w+|contacts?|subscribers?|database|newsletter|"
         r"mailing)\b[^.]{0,60}\b(?:without|no)\s+(?:\w+\s+){0,2}?(?:asking|consent|permission|opt[-\s]?in|agreement)",
+        r"\bopt(?:s|ed|ing)?\s+(?:everyone|everybody|all|them|people|users|donors|customers|members|subscribers|"
+        r"contacts|visitors|attendees|supporters|buyers|clients)\s+in\b",
     ],
     # A paid, gifted or affiliate connection is disclosed where the reader sees it.
     "undisclosed_ad": [
@@ -122,16 +167,21 @@ _DARK_PATTERNS = {
         r"(?:don't|do\s+not|never)\s+(?:include|use|add|put|show|mention|disclose|say|tell))\b[^.]{0,40}?"
         r"(?:#(?:ad|ads|sponsored|paid|partner|spon|gifted)\b|"
         r"\b(?:ad|sponsorship|paid[-\s]partnership|affiliate)\s+(?:disclosure|label|tag)s?\b|\bdisclosures?\b|"
-        r"\bthat\s+(?:it|this|the\s+\w+|we)\s+(?:is|was|'s|are|were|got)\s+"
+        r"\b(?:that\s+)?(?:it|this|the\s+\w+|we|they)(?:'s|\s+(?:is|was|'s|are|were|got))\s+"
         r"(?:sponsored|paid|an\s+ad|gifted|compensated))",
-        r"\bleave\s+(?:the\s+)?(?:#(?:ad|sponsored|paid)\b|disclosure|(?:ad|sponsorship)\s+(?:label|tag))\s+(?:out|off)\b",
+        # "Leave the sponsorship disclosure out"; not "Never leave the disclosure out", not "the price tag off".
+        r"(?<!n't\s)(?<!\bnot\s)(?<!\bnever\s)\b(?:leave|keep|take|cut)\s+(?:the\s+|our\s+|that\s+|any\s+|this\s+)?"
+        r"(?:#(?:ad|ads|sponsored|paid|partner|spon|gifted)\b|"
+        r"(?:(?:ad|sponsorship|sponsor|paid[-\s]partnership|affiliate|partnership)\s+)?(?:disclosures?|disclaimers?)|"
+        r"(?:ad|sponsorship|sponsor|paid[-\s]partnership|affiliate|partnership)\s+(?:labels?|tags?))\s+(?:out|off)\b",
     ],
     # Pricing and asks built to mislead (marketing-psychology's techniques, as things to catch): a fictitious original
     # price, a decoy option, door-in-the-face.
     "pricing_manipulation": [
         r"\b(?:fake|false|fictitious|made[-\s]up|inflated|phony|invented)\s+(?:\w+\s+){0,2}?"
         r"(?:original|regular|list|retail|was|compare[-\s]at|reference)\s+prices?",
-        r"\b(?:original|regular|was|list|compare[-\s]at)\s+price\b[^.]{0,60}\b(?:never|nobody|no\s+one)\s+"
+        r"\b(?:original|regular|was|list|compare[-\s]at|crossed" + _HY + r"out|struck" + _HY + r"through|strikethrough|"
+        r"slashed)\s+price\b[^.]{0,60}\b(?:never|nobody|no\s+one)\s+"
         r"(?:\w+\s+){0,2}?(?:charged|paid|sold|offered|used)",
         r"\bdecoy\s+(?:tier|option|plan|price|pricing|package|level|choice)s?\b",
         r"\b(?:deliberately|intentionally|purposely)\s+(?:worse|bad|overpriced|unattractive)\s+(?:\w+\s+){0,2}?"

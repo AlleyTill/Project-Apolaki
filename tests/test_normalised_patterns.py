@@ -129,6 +129,15 @@ FAMILIES = [
     (library, "urgency_claim", "Seats are going fast, so don't wait.", "flagged"),
     (library, "review_incentive", "We'll give a gift card to everyone who leaves a review.", "flagged"),
     (library, "sensitive_traits", "Let's segment donors by religion.", "flagged"),
+    # the library engine: patterns added 2026-11-03 (round 2)
+    (library, "astroturfing (as though)", "Write it as though you're a customer.", "blocked"),
+    (library, "astroturfing (customer reviews)", "Let's write 5 glowing customer reviews.", "blocked"),
+    (library, "astroturfing (invent)", "Let's invent three testimonials.", "blocked"),
+    (library, "astroturfing (fabricated)", "Let's post fabricated reviews.", "blocked"),
+    (library, "false_urgency (limited-time)", "It's a limited-time offer.", "blocked"),
+    (library, "false_urgency (do not miss out)", "Do not miss out, it's nearly over.", "blocked"),
+    (library, "undisclosed_ad (it's sponsored)", "Don't say it's sponsored.", "blocked"),
+    (library, "undisclosed_ad (leave out)", "Let's leave the sponsorship disclosure out.", "blocked"),
     # the scaffold's own check
     (scaffold, "false_urgency", "Don't miss out on the gala!", "blocked"),
     (scaffold, "guilt_manipulation", "If you don't help, families will suffer.", "blocked"),
