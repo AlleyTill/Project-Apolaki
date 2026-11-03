@@ -48,10 +48,10 @@ def test_compatibility_forms_and_accents_become_plain_letters(text, plain):
 
 
 @pytest.mark.parametrize("text,plain", [
-    ("f\u0430k\u0435 r\u0435vi\u0435w", "fake review"),          # Cyrillic а е
-    ("\u0455\u0440\u0430m", "spam"),                              # Cyrillic ѕ р а
+    ("f\u0430k\u0435 r\u0435vi\u0435w", "fake review"),          # Cyrillic a and ie (U+0430, U+0435)
+    ("\u0455\u0440\u0430m", "spam"),                              # Cyrillic dze, er and a (U+0455, U+0440, U+0430)
     ("\u0421\u041e\u0420\u0423", "COPY"),                         # Cyrillic capitals
-    ("\u03bf\u03c1\u03b5n", "open"),                              # Greek ο ρ ε
+    ("\u03bf\u03c1\u03b5n", "open"),                              # Greek omicron, rho, epsilon (U+03BF, U+03C1, U+03B5)
     ("\u0391CT N\u039fW", "ACT NOW"),                             # Greek capitals
     ("l\u0131m\u0131ted", "limited"),                             # dotless i
 ])

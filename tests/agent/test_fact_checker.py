@@ -191,3 +191,40 @@ def test_the_report_on_an_empty_file_says_nothing_was_checked(monkeypatch, tmp_p
     fake_model(monkeypatch)
     report = fc.check_file(str(f))
     assert report["checked"] is False and "empty" in capsys.readouterr().out.lower()
+
+
+# ---- every entry of the claim list is accounted for (2026-11-03 verifier: non-objects were dropped silently) -------
+def test_entries_that_arent_claims_are_counted_and_shown(monkeypatch, tmp_path, capsys):
+    """A bare string or a number in the claim list can't be classified. It was dropped and never mentioned, so a
+    claim the model wrote as plain text vanished from the report."""
+    f = tmp_path / "draft.md"
+    f.write_text("Our clinic served 450 families and 98% of them came back.")
+    fake_model(monkeypatch, [answer([{"claim": "450 families", "classification": "SUSPECT", "reason": "r",
+                                      "priority": "HIGH"}, "98% of them came back", 42])])
+    report = fc.check_file(str(f))
+    out = capsys.readouterr().out
+    assert report["unreadable_claims"] == ["'98% of them came back'", "42"]
+    assert report["total_claims"] == 1 and len(report["suspect"]) == 1
+    assert report["checked"] is False and report["partial"] is True, "a claim list with unreadable entries isn't whole"
+    assert "2 entries in the claim list weren't claims" in out and "98% of them came back" in out
+    assert "Checked all of it" not in out and "READ ALL OF IT" in out and "CHECKED ONLY PART" not in out
+
+
+def test_a_claim_with_an_unknown_classification_is_listed_not_lost(monkeypatch, tmp_path, capsys):
+    f = tmp_path / "draft.md"
+    f.write_text("Our clinic served 450 families.")
+    fake_model(monkeypatch, [answer([{"claim": "450 families", "classification": "UNSOURCED"},
+                                     {"claim": "a SUSPECT claim with no reason", "classification": "SUSPECT"}])])
+    report = fc.check_file(str(f))
+    out = capsys.readouterr().out
+    assert [c["claim"] for c in report["unclassified"]] == ["450 families"]
+    assert "UNCLASSIFIED" in out and "450 families" in out
+    assert len(report["suspect"]) == 1 and "a SUSPECT claim with no reason" in out
+
+
+def test_a_whole_and_readable_claim_list_still_reports_checked(monkeypatch, tmp_path, capsys):
+    f = tmp_path / "draft.md"
+    f.write_text("Our clinic served 450 families.")
+    fake_model(monkeypatch, [answer([{"claim": "450 families", "classification": "SUSPECT", "reason": "r"}])])
+    report = fc.check_file(str(f))
+    assert report["checked"] is True and report["unreadable_claims"] == [] and report["unclassified"] == []

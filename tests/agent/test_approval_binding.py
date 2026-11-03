@@ -198,8 +198,15 @@ def test_an_item_with_no_recorded_hash_is_not_approved(home):
     (d / "20261016_130000_social.json").write_text(json.dumps(
         {"id": "20261016_130000", "content": CLEAN, "content_type": "social", "status": "pending",
          "ethics_verdict": "approved", "ethics_reason": "No ethics concerns"}))
-    with pytest.raises(ValueError, match="no content_sha256"):
+    before = (d / "20261016_130000_social.json").read_text()
+    try:
         review_item("20261016_130000", "approved")
+    except Exception as e:     # noqa: BLE001 - any other exception (formatting a missing hash) is not the refusal
+        refusal = e
+    else:
+        refusal = None
+    assert isinstance(refusal, ValueError) and "no content_sha256" in str(refusal), f"not the refusal: {refusal!r}"
+    assert (d / "20261016_130000_social.json").read_text() == before, "an approval was recorded"
     try:
         assert review_item("20261016_130000", "rejected")["status"] == "rejected"
     except ValueError as e:

@@ -529,7 +529,8 @@ def test_a_name_in_non_ascii_tags_is_found_and_erased(home):
     tagged = s.store("Volunteer list reviewed.", tags=["contact: " + MARIA])
     kept = s.store("Brand voice: plain and warm.")
     s.close()
-    assert db_rows(home, f"SELECT tags FROM memories WHERE id = '{tagged}'")[0][0] == '["contact: Mar\\u00eda L\\u00f3pez"]'
+    stored = db_rows(home, f"SELECT tags FROM memories WHERE id = '{tagged}'")[0][0]
+    assert stored == '["contact: Mar\\u00eda L\\u00f3pez"]'
     p = X.plan(MARIA)
     assert [m["id"] for m in p.memories] == [tagged]
     try:

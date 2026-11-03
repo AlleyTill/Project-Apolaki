@@ -600,7 +600,8 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
                          f"since the dry run, or no dry run was read. Nothing was removed. Run the dry run again")
     if p.db_other:
         raise EraseError("the database names the person where this erase can't remove it from ("
-                         + ", ".join(f"table {d['table']}, column {d['column']}: {d['rows']} row(s)" for d in p.db_other)
+                         + ", ".join(f"table {d['table']}, column {d['column']}: {d['rows']} row(s)"
+                                     for d in p.db_other)
                          + "). Nothing was removed. A person deals with those rows first, then runs the dry run again")
     names = p.names
     hit = _matcher(names)

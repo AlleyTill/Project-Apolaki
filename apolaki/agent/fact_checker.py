@@ -170,43 +170,56 @@ def check_file(filepath: str) -> dict:
     """Check a grant draft file and return report.
 
     The report says how much of the file was read: checked is True only when all of it was, with every claim list
-    whole; partial is True when some parts ran and others didn't (or were cut), and the claims are then only from the
-    parts that ran. The printout says the same in words."""
+    whole and every entry of it a claim; partial is True when some parts ran and others didn't (or were cut, or held
+    entries that aren't claims), and the claims are then only from what could be read. The printout says the same in
+    words.
+
+    Every entry of the claim list is accounted for (2026-11-03 verifier: entries that weren't JSON objects were
+    dropped without a word): unreadable_claims lists each one that isn't an object, as text, and unclassified each
+    claim whose classification isn't one of the four. Both are printed for a person to read."""
     with open(filepath) as f:
         text = f.read()
 
     out = check_document_parts(text)
     claims = [c for c in out["claims"] if isinstance(c, dict)]
+    unreadable = [repr(c)[:200] for c in out["claims"] if not isinstance(c, dict)]
     coverage = {k: out[k] for k in ("chars", "parts", "checked_parts", "failed_parts", "incomplete_parts")}
+    none_read = {"verified": [], "external": [], "suspect": [], "projections": [], "unclassified": [],
+                 "unreadable_claims": []}
     print(f"\n{'='*60}")
     print(f"FACT CHECK: {os.path.basename(filepath)}")
     print(f"{'='*60}")
     if not out["parts"]:
         print("  EMPTY DOCUMENT: nothing was checked.")
-        return {"file": filepath, "checked": False, "partial": False, "total_claims": None, **coverage,
-                "verified": [], "external": [], "suspect": [], "projections": []}
+        return {"file": filepath, "checked": False, "partial": False, "total_claims": None, **coverage, **none_read}
     if not out["checked_parts"]:
         print("  CHECK DID NOT RUN: the checker produced no parseable claim list. Not a clean result.")
         for f in out["failed_parts"]:
             print(f"    part {f['part']}: {f['error']}")
-        return {"file": filepath, "checked": False, "partial": False, "total_claims": None, **coverage,
-                "verified": [], "external": [], "suspect": [], "projections": []}
+        return {"file": filepath, "checked": False, "partial": False, "total_claims": None, **coverage, **none_read}
 
+    whole = out["complete"] and not unreadable
+    known = ("VERIFIED", "EXTERNAL", "SUSPECT", "PROJECTION")
     report = {
         "file": filepath,
-        "checked": out["complete"],
-        "partial": not out["complete"],
+        "checked": whole,
+        "partial": not whole,
         "total_claims": len(claims),
         **coverage,
         "verified": [c for c in claims if c.get("classification") == "VERIFIED"],
         "external": [c for c in claims if c.get("classification") == "EXTERNAL"],
         "suspect": [c for c in claims if c.get("classification") == "SUSPECT"],
         "projections": [c for c in claims if c.get("classification") == "PROJECTION"],
+        "unclassified": [c for c in claims if c.get("classification") not in known],
+        "unreadable_claims": unreadable,
     }
 
-    if out["complete"]:
+    if whole:
         print(f"  Checked all of it: {out['chars']:,} characters in {out['parts']} part"
               f"{'s' if out['parts'] != 1 else ''}.")
+    elif out["complete"]:
+        print(f"  READ ALL OF IT ({out['chars']:,} characters), BUT THE CLAIM LIST WASN'T WHOLE: the counts below leave "
+              f"out the entries that weren't claims.")
     else:
         print(f"  CHECKED ONLY PART OF IT: {len(out['checked_parts'])} of {out['parts']} parts ran whole or in part; "
               f"the claims below come only from the parts that ran.")
@@ -214,22 +227,32 @@ def check_file(filepath: str) -> dict:
             print(f"    NOT CHECKED: part {f['part']}, characters {f['chars'][0]:,}-{f['chars'][1]:,}: {f['error']}")
         for k in out["incomplete_parts"]:
             print(f"    CUT SHORT: part {k}'s claim list ran into the output budget and may be missing claims.")
+    if unreadable:
+        n = len(unreadable)
+        print(f"    {n} {'entry' if n == 1 else 'entries'} in the claim list weren't claims (not JSON objects), so "
+              f"{'it was' if n == 1 else 'they were'} not classified; a person reads {'it' if n == 1 else 'them'}:")
+        for c in unreadable:
+            print(f"      - {c}")
     print(f"  Total claims: {report['total_claims']}")
     print(f"  Verified: {len(report['verified'])}")
     print(f"  External (verify): {len(report['external'])}")
     print(f"  SUSPECT (likely fabricated): {len(report['suspect'])}")
     print(f"  Projections: {len(report['projections'])}")
+    if report["unclassified"]:
+        print(f"  UNCLASSIFIED (none of the four labels; read them): {len(report['unclassified'])}")
+        for c in report["unclassified"]:
+            print(f"    - {str(c.get('claim', c))[:100]}... (labelled {c.get('classification')!r})")
 
     if report["suspect"]:
         print(f"\n  🚨 SUSPECT CLAIMS:")
         for c in report["suspect"]:
-            print(f"    - {c['claim'][:100]}...")
-            print(f"      Reason: {c['reason']}")
+            print(f"    - {str(c.get('claim', c))[:100]}...")
+            print(f"      Reason: {c.get('reason', '(none given)')}")
 
     if report["external"]:
         print(f"\n  ⚠️ EXTERNAL (needs human verification):")
         for c in report["external"]:
-            print(f"    - {c['claim'][:100]}...")
+            print(f"    - {str(c.get('claim', c))[:100]}...")
 
     return report
 
