@@ -178,17 +178,60 @@ def test_the_limits_default_tight(home):
     assert e.bdi.list_beliefs() == [] and (home / "grant-hunt" / "learning.paused").exists()
 
 
-@pytest.mark.parametrize("body", ['{"daily_cap": "5"}', '{"total_ceiling": -1}', '{"daily_cap": null}', "{not json",
-                                  "[]", '{"daily_cap": true}'])
-def test_a_switch_file_that_cant_be_read_refuses_learning(home, body):
+BROKEN_SWITCHES = ['{"on": true, "daily_cap": "5"}', '{"on": true, "total_ceiling": -1}', '{"on": true, "daily_cap": null}',
+                   "{not json", "[]", '{"on": true, "daily_cap": true}']
+
+
+@pytest.mark.parametrize("body", BROKEN_SWITCHES)
+@pytest.mark.parametrize("with_decision", [True, False])
+def test_a_switch_file_that_cant_be_read_refuses_learning(home, body, with_decision):
+    """Each body says on, so the refusal is the unreadable limits, not the switch; with nothing to learn the draft
+    still reports learning off, for the right reason."""
     (home / "grant-hunt").mkdir()
     (home / "grant-hunt" / "learning.json").write_text(body)
+    if with_decision:
+        decision(home, 1)
+    agent = FakeAgent()
+    e = engine(agent)
+    out = e.draft("A", "social")
+    assert e.bdi.list_beliefs() == [] and agent.calls[0]["reviewer_feedback"] == ""
+    assert out["learning"]["used"] is False
+    assert out["learning"]["why_not"].startswith("nothing is learned while"), out["learning"]
+    assert "learning.json" in out["learning"]["why_not"]
+
+
+@pytest.mark.parametrize("body", BROKEN_SWITCHES)
+def test_sync_refuses_with_a_switch_file_that_cant_be_read_even_with_nothing_to_record(home, body):
+    from apolaki import learning
+    (home / "grant-hunt").mkdir()
+    (home / "grant-hunt" / "learning.json").write_text(body)
+    with pytest.raises(learning.LearningRefused, match="nothing is learned while"):
+        engine(learn=False).sync_reviews()
+
+
+def test_the_limits_are_read_when_the_beliefs_are_admitted_too(home, monkeypatch):
+    """The second layer on its own: with the first check (why_not) out of the way, a switch that can't be read still
+    stops the run where the limits are read, and the draft reports it."""
+    from apolaki import learning
+    monkeypatch.setattr(learning, "why_not", lambda draft=True: None)
+    (home / "grant-hunt").mkdir()
+    (home / "grant-hunt" / "learning.json").write_text('{"on": true, "daily_cap": "5"}')
     decision(home, 1)
     agent = FakeAgent()
     e = engine(agent)
     out = e.draft("A", "social")
     assert e.bdi.list_beliefs() == [] and agent.calls[0]["reviewer_feedback"] == ""
-    assert "learning.json" in out["learning"]["why_not"]
+    assert out["learning"]["used"] is False and "daily_cap" in out["learning"]["why_not"]
+
+
+def test_learning_on_other_days_doesnt_count_toward_today(home):
+    switch(home, on=True, daily_cap=1)
+    (home / "engine_beliefs_log.jsonl").write_text("".join(
+        json.dumps({"day": "2000-01-01", "kind": "added", "id": f"old{i}"}) + "\n" for i in range(3)))
+    decision(home, 1)
+    e = engine()
+    out = e.draft("A", "social")
+    assert out["learning"]["used"] is True and len(e.bdi.list_beliefs()) == 1
 
 
 @pytest.mark.parametrize("body", ['{"on": false}', '{"on": "yes"}', '{"daily_cap": 3}'])
