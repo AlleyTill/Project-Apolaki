@@ -62,7 +62,7 @@ def open_store(home):
 
 TEXTS = {
     "m1": "Marisol Quintero leads the tenant union at Riverside Commons.",
-    "m2": "Met Marisol Quintero and Dev Okafor about the spring appeal.",
+    "m2": "Met Marisol Quintero and Dev Okafor about the spring appeal at Harbor Hall.",
     "m3": "Dev Okafor runs the food bank at Harbor Hall.",
     "m4": "marisol quintero asked not to be photographed at events.",
     "m5": "Volunteer list reviewed for the spring appeal.",
@@ -152,10 +152,10 @@ def test_the_dry_run_lists_every_store_and_changes_nothing(home):
         "Lucia Quintero": "only in erased memories", "Lincoln Elementary": "only in erased memories"}
     assert {w["title"]: w["action"] for w in p.wiki_pages} == {
         "Marisol Quintero": "remove", "Riverside Commons": "remove", "Lucia Quintero": "remove",
-        "Dev Okafor": "rebuild"}
+        "Dev Okafor": "rebuild", "Harbor Hall": "rebuild"}             # both pages cite m2, which names her
     assert {f["file"]: f["action"] for f in p.wiki_files} == {
         "marisol_quintero.md": "remove", "riverside_commons.md": "remove", "lucia_quintero.md": "remove",
-        "dev_okafor.md": "rebuild"}
+        "dev_okafor.md": "rebuild", "harbor_hall.md": "rebuild"}
     assert p.beliefs == ["b1"] and p.belief_log_lines == 1 and p.mentions and p.triples
     assert {path for path, _ in p.elsewhere} == NOT_MEMORY
     text = X.describe(p)
@@ -204,8 +204,18 @@ def test_after_the_erase_nothing_of_the_person_remains_in_any_store(home):
                                                         "Lincoln Elementary")]
     kept_vector = fake_embed(TEXTS["m3"]).tobytes()
     p = X.plan(PERSON)
-    done = X.erase(PERSON, confirm=p.code, by="the data lead", reason="asked to be removed")
+    try:
+        done = X.erase(PERSON, confirm=p.code, by="the data lead", reason="asked to be removed")
+    except Exception as e:                  # a refusal, a leftover the erase's own check found, a broken constraint
+        pytest.fail(f"the erase didn't complete: {e!r}")
     assert done["counts"]["memories"] == 5 and {path for path, _ in done["elsewhere"]} == NOT_MEMORY
+    # the graph: no row left pointing at an erased memory or entity (m2 also tied Dev Okafor to Harbor Hall)
+    kept_mem = {ids["m3"], ids["m6"], ids["m8"]}
+    assert {r[0] for r in db_rows(home, "SELECT source_memory_id FROM kg_triples")} <= kept_mem
+    assert {r[0] for r in db_rows(home, "SELECT memory_id FROM kg_entity_mentions")} <= kept_mem
+    kept_ent = {r[0] for r in db_rows(home, "SELECT id FROM kg_entities")}
+    assert {r[0] for r in db_rows(home, "SELECT entity_id FROM kg_entity_mentions")} <= kept_ent
+    assert {x for r in db_rows(home, "SELECT subject_entity_id, object_entity_id FROM kg_triples") for x in r} <= kept_ent
 
     # rows
     assert {r[0] for r in db_rows(home, "SELECT id FROM memories")} == {ids["m3"], ids["m6"], ids["m8"]}
@@ -224,6 +234,7 @@ def test_after_the_erase_nothing_of_the_person_remains_in_any_store(home):
     files = {f.name for f in (home / "wiki").iterdir()}
     assert files == {"dev_okafor.md", "harbor_hall.md"}
     assert "Harbor Hall" in (home / "wiki" / "dev_okafor.md").read_text()
+    assert "Dev Okafor" in (home / "wiki" / "harbor_hall.md").read_text()
     # beliefs: hers removed and logged without her name; the other kept
     assert [b["id"] for b in json.loads((home / "engine_beliefs.json").read_text())] == ["b2"]
     log = [json.loads(line) for line in (home / "engine_beliefs_log.jsonl").read_text().splitlines()]
@@ -286,6 +297,43 @@ def test_the_check_after_the_erase_can_fire(home):
     assert any("apolaki.db" in f for f in X.leftovers([PERSON], home))
     assert any("marisol_quintero.md" in f for f in X.leftovers([PERSON], home))
     assert any("engine_beliefs.json" in f for f in X.leftovers([PERSON], home))
+
+
+def test_the_check_finds_an_erased_embedding_left_in_the_database(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    vector = fake_embed(TEXTS["m1"]).tobytes()
+    assert any("an erased embedding" in f for f in X.leftovers([PERSON], home, [vector]))
+    assert not any("an erased embedding" in f for f in X.leftovers([PERSON], home, [b"\x01\x02" * 1536]))
+
+
+@pytest.mark.parametrize("probe", ["MAR\u00cdA L\u00d3PEZ", "Mari\u200bsol Quintero", "\uff2d\uff41risol Quintero",
+                                   "\u041carisol Quintero", "O\u2019Brien", "O`Brien", "\U000e0041\U000e0042 tag"])
+def test_the_byte_fold_reads_like_the_full_fold(probe):
+    """The check of the database bytes uses a fast fold; on the disguises it covers it must read what plan() reads."""
+    from apolaki.agent import erase as X
+    assert X._fold_bytes(probe.encode()).split() == X._fold(probe).split()
+
+
+def test_ascii_text_folds_exactly_as_normalize_does(home):
+    """The ASCII shortcut in _fold must give normalize()'s answer: a backtick for an apostrophe still matches."""
+    from apolaki.agent import erase as X
+    from apolaki.security.normalize import normalize
+    for text in ("Siobhan O`Brien called.", "plain text, no quotes", "it's `quoted` here"):
+        assert X._fold(text) == " ".join(normalize(text).casefold().split())
+    s = open_store(home)
+    mid = s.store("Siobhan O`Brien called about the appeal.")
+    s.close()
+    assert [m["id"] for m in X.plan("Siobhan O'Brien").memories] == [mid]
+
+
+def test_a_longer_name_that_only_starts_with_theirs_is_not_them(home):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store("Marisol Quinterova runs the choir.")
+    s.store("AMarisol Quintero is a typo here.")
+    s.close()
+    assert X.plan(PERSON).memories == []
 
 
 def test_an_erase_whose_check_finds_the_name_is_an_error_not_a_success(home, monkeypatch):

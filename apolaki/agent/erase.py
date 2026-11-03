@@ -12,8 +12,8 @@ path that deletes. It is a command a person runs; the MCP server has no erase to
 
 What it removes, for the name and each alias (whole words; case, accents and look-alike letters folded, so "María
 López" also finds "maria lopez"):
-  - every memory whose text, tags or source names the person, archived ones included, and every memory the entity
-    graph links to them, each with its embedding (the row's blob and its vector-index entry);
+  - every memory whose text, tags or source names the person, archived ones included, each with its embedding (the
+    row's blob and its vector-index entry);
   - the person's entity rows (an entity whose name contains the person's, such as "Dr. María López", counts), every
     mention row and triple that touches them or an erased memory, and every other entity left with no memory behind
     it, since it came only from what was erased;
@@ -218,13 +218,12 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
         try:
             ents = {r[0]: r for r in con.execute("SELECT id, name, entity_type FROM kg_entities")}
             person = {eid for eid, r in ents.items() if named(r[1])}
-            linked = {r[0] for r in con.execute(
-                "SELECT DISTINCT memory_id FROM kg_entity_mentions WHERE entity_id IN (%s)" % ",".join("?" * len(person)),
-                tuple(person))} if person else set()
             mems = []
+            # Every memory the graph links to the person names them in its text (an entity is taken from the text),
+            # so the text match finds those too.
             for mid, content, tags, source, archived in con.execute(
                     "SELECT id, content, tags, source, archived FROM memories ORDER BY created_at"):
-                if mid in linked or named(content, tags, source):
+                if named(content, tags, source):
                     mems.append({"id": mid, "archived": bool(archived), "text": content})
             erased_mem = {m["id"] for m in mems}
             mention_rows = con.execute("SELECT id, entity_id, memory_id FROM kg_entity_mentions").fetchall()
