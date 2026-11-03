@@ -388,5 +388,8 @@ def test_the_cli_reports_a_bad_content_type_and_exits_2(home, monkeypatch, capsy
     agent = FakeAgent()
     real_init = E.ApolakiEngine.__init__
     monkeypatch.setattr(E.ApolakiEngine, "__init__", lambda self, learn=False: real_init(self, agent, learn=learn))
-    assert E.main(["draft", "Announce the clinic", "--type", "../outside"]) == 2
-    assert "content type" in capsys.readouterr().err and agent.calls == []
+    try:
+        rc = E.main(["draft", "Announce the clinic", "--type", "../outside"])
+    except Exception as e:     # noqa: BLE001 - a traceback is not the CLI's answer
+        pytest.fail(f"the CLI raised instead of reporting the refusal: {e!r}")
+    assert rc == 2 and "content type" in capsys.readouterr().err and agent.calls == []
