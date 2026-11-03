@@ -43,6 +43,7 @@ from . import config
 from . import style_lint  # stdlib only; sections 1-3 of the AI-writing pass
 from .memory_store import ApolakiMemoryStore
 from ..security.ethics import EthicsVerdict, MarketingEthicsEngine
+from ..security.normalize import fold_quotes, normalize
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("apolaki")
@@ -150,7 +151,8 @@ def ethics_check(content: str) -> tuple[str, str]:
 
 
 def _own_ethics_check(content: str) -> tuple[str, str]:
-    """The scaffold's own patterns. Returns (verdict, reason)."""
+    """The scaffold's own patterns, on normalised text (apolaki.security.normalize). Returns (verdict, reason)."""
+    content = normalize(content)
     for category, patterns in COMPILED_DARK.items():
         for pattern in patterns:
             if pattern.search(content):
@@ -498,13 +500,14 @@ NOTES_SECTION = re.compile(r"^\s*(note|notes|explanation|rationale|what i checke
 
 
 def contract_violations(draft: str) -> list[str]:
-    lines = [ln for ln in draft.strip().splitlines() if ln.strip()]
+    """Patterns read normalised text (apolaki.security.normalize); the line quoted back is the draft's own."""
+    lines = [ln for ln in draft.strip().splitlines() if normalize(ln).strip()]
     out = []
-    if lines and PREAMBLE.search(lines[0]):
+    if lines and PREAMBLE.search(normalize(lines[0])):
         out.append("preamble: %r" % lines[0][:80])
-    if lines and AFTERWORD.search(lines[-1]):
+    if lines and AFTERWORD.search(normalize(lines[-1])):
         out.append("afterword: %r" % lines[-1][:80])
-    if NOTES_SECTION.search(draft):
+    if NOTES_SECTION.search(normalize(draft)):
         out.append("notes section present")
     return out
 
@@ -513,7 +516,7 @@ QUOTED_SPAN = re.compile(r"[\"“]([^\"”\n]{12,200})[\"”]")
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", s).strip().lower()
+    return re.sub(r"\s+", " ", normalize(s)).strip().lower()
 
 
 def unsourced_quotations(draft: str, sources: list[str]) -> list[str]:
@@ -524,13 +527,18 @@ def unsourced_quotations(draft: str, sources: list[str]) -> list[str]:
     that occurs in none of them was made up. Seen 2026-09-24: a tweet draft passed
     ethics and lint and reached the queue carrying an invented paper title. This
     is advisory (the reviewer sees it); it never rewrites the draft.
+
+    Quote marks of every kind count (curly, guillemets, low-9, fullwidth: fold_quotes keeps positions, so the span
+    listed is the draft's own text), and both sides are compared normalised, so a quotation the brief gives with a
+    straight apostrophe isn't listed because the draft uses a curly one.
     """
     pool = _norm(" ".join(sources))
     out = []
-    for m in QUOTED_SPAN.finditer(draft):
-        q = _norm(m.group(1)).strip("'.,;:!? ")
+    for m in QUOTED_SPAN.finditer(fold_quotes(draft)):
+        original = draft[m.start(1):m.end(1)]
+        q = _norm(original).strip("'.,;:!? ")
         if q and q not in pool:
-            out.append(m.group(1))
+            out.append(original)
     return out
 
 
@@ -554,7 +562,7 @@ CAPTURE_HEAD_CHARS = 240
 def _should_auto_capture(user_message: str, response: str) -> bool:
     if len(response) <= 200:
         return False
-    head = user_message[:CAPTURE_HEAD_CHARS]
+    head = normalize(user_message)[:CAPTURE_HEAD_CHARS]
     if REVIEW_TASK.search(head):
         return False
     return bool(CAPTURE_TRIGGER.search(head))

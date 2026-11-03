@@ -43,6 +43,8 @@ from apolaki.cognition.fast_classifier import (
     FastClassifierConfig,
 )
 
+from apolaki.security.normalize import normalize
+
 logger = logging.getLogger(__name__)
 
 
@@ -275,7 +277,7 @@ class Router:
         self, message: str
     ) -> tuple[str, float, str, dict[str, int]]:
         """Return ``(domain, confidence, reasoning, hits)`` via keyword scan."""
-        msg_lower = message.lower()
+        msg_lower = normalize(message).lower()      # as the classifier reads it (apolaki.security.normalize)
         hits: dict[str, int] = {}
         for keyword, domain in self._routing_table.items():
             count = len(re.findall(re.escape(keyword), msg_lower))

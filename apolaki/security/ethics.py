@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from .normalize import normalize
+
 logger = logging.getLogger(__name__)
 
 
@@ -137,7 +139,11 @@ class MarketingEthicsEngine:
     """
 
     def evaluate(self, content: str) -> EthicsCheck:
-        """Evaluate content or action against marketing ethics."""
+        """Evaluate content or action against marketing ethics.
+
+        The patterns read normalised text (curly quotes straight, invisible characters out, look-alike letters
+        folded: apolaki.security.normalize), so "Don’t miss out" is read as "Don't miss out"."""
+        content = normalize(content)
 
         # Check dark patterns first (hard deny)
         for category, patterns in _COMPILED_DARK_PATTERNS.items():

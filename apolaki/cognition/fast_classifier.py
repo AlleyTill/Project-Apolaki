@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
+from apolaki.security.normalize import normalize
+
 logger = logging.getLogger(__name__)
 
 
@@ -195,7 +197,7 @@ class FastClassifier:
         FastClassification with stage, domain, confidence, reason.
         """
         t0 = time.monotonic()
-        msg_lower = message.lower()
+        msg_lower = normalize(message).lower()      # curly quotes, invisible and look-alike characters folded
 
         # --- DENY CHECK (always runs first) ---
         for pattern in self._compiled_deny:
