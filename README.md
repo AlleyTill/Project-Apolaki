@@ -50,6 +50,12 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   Kintsugi engine keeps each decision as a belief, and the recent notes for a content type go to the model with the
   next brief of that type, as reference material beside memory. They never go into the brief itself, which is what
   the ethics check reads.
+  - The engine holds learning's safeguards for every caller (`apolaki/learning.py`): a switch file whose
+    `{"on": true}` a draft needs when the file is there, a pause file only a person removes, a daily cap and a total
+    ceiling (5 and 25 until a person raises them) that hold a whole run back and write the pause, a log of every
+    belief added, held back or removed, and a watch on each draft that fails it if Apolaki's memory or beliefs
+    change while it drafts. A pause tells no one by itself: it is a file and a log line, and someone has to read
+    them.
 - **Runs on the Kintsugi engine.** Each request is a BDI intention carried out by a skill chip from a Kintsugi skill
   registry (Rivet's pattern). Kintsugi's BDI and skill modules are vendored, so a bare install works, and a Kintsugi
   checkout (`KINTSUGI_PATH`) takes precedence when there is one.

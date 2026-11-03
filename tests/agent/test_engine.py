@@ -94,6 +94,8 @@ def test_feedback_is_per_content_type_and_needs_a_note(home):
 def test_the_feedback_block_marks_its_cut(home):
     for i in range(7):
         queue_item(home, f"20261016_12000{i}", status="rejected", note=f"note {i}")
+    (home / "grant-hunt").mkdir(parents=True)               # seven in a day is over the default cap of 5 (apolaki.learning):
+    (home / "grant-hunt" / "learning.json").write_text('{"daily_cap": 7}')     # a person raises it on purpose
     e = engine(home)
     e.sync_reviews()
     block = e.feedback_block("social")
