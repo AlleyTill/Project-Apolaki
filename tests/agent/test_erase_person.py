@@ -457,8 +457,13 @@ def test_the_vector_indexes_hold_only_what_remains(home):
     pytest.importorskip("sqlite_vec")
     from apolaki.agent import erase as X
     ids = plant(home)
-    assert db_rows_vec(home, "SELECT count(*) FROM memory_vec")[0][0] == 7          # 8 stored, 1 archived
+    s = open_store(home)
+    old = s.store("The old office hours were Tuesday mornings.")
+    s.archive_memory(old, reason="out of date")              # kept, archived: it stays out of the index
+    s.close()
+    assert db_rows_vec(home, "SELECT count(*) FROM memory_vec")[0][0] == 7          # 9 stored, 2 archived
     X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
+    assert old in {r[0] for r in db_rows(home, "SELECT id FROM memories WHERE archived = 1")}
     assert {r[0] for r in db_rows_vec(home, "SELECT id FROM memory_vec")} == {ids["m3"], ids["m6"], ids["m8"]}
     kept = {r[0] for r in db_rows(home, "SELECT id FROM kg_entities")}
     assert {r[0] for r in db_rows_vec(home, "SELECT id FROM entity_vec")} == kept
