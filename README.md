@@ -22,10 +22,18 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   with no source as suspect (`fact_checker`). The checker reads the whole piece, in parts when it is long, and says
   plainly which characters went unchecked when a part fails.
 - **Two ethics checks, and the stricter one wins.**
-  - *Blocked:* false urgency, guilt manipulation, astroturfing (pretending to be a customer or supporter), spam,
-    deceptive or inflated metrics.
-  - *Sent for human review:* large financial asks, instructions to publish or post on the organization's behalf,
-    sensitive political topics, sharing data with outside parties.
+  - *Blocked:* false urgency, guilt manipulation, astroturfing (pretending to be a customer or supporter, or writing
+    reviews and testimonials in their name), spam, deceptive or inflated metrics, review manipulation (five-star
+    asks, rewards for good reviews, asking only the happy customers, prewritten reviews), consent bypass (pre-checked
+    boxes, adding or emailing people without asking), undisclosed ads, pricing tricks (a former price never charged,
+    decoy tiers, door-in-the-face), and inferring people's health, faith, politics, sexuality, ethnicity or finances.
+  - *Sent for human review:* amounts of $1,000 or more however they are written ("$5,000", "$1.2M", "50,000 USD"),
+    other financial asks, instructions to publish or post on the organization's behalf, sensitive political topics,
+    sharing data with outside parties, claimed scarcity and lapse deadlines, rewards for reviews, and targeting by a
+    sensitive trait.
+  - They are patterns, and patterns have limits: they can't see negation (a brief saying "no fake testimonials" is
+    blocked) or catch a paraphrase they weren't written for. The known misses are kept as expected failures in
+    `tests/test_red_team_probes.py`. The person who approves the draft is the check that holds.
   - Both read normalised text: curly quotes are straightened, invisible characters removed and look-alike letters
     (fullwidth, Cyrillic, accented) folded first, so "Don’t miss out" typed on a phone is read as "Don't miss out".
   - They run on every brief before the model is called, on every draft, and in the interactive chat on each message

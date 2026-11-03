@@ -42,7 +42,7 @@ import requests
 from . import config
 from . import style_lint  # stdlib only; sections 1-3 of the AI-writing pass
 from .memory_store import ApolakiMemoryStore
-from ..security.ethics import EthicsVerdict, MarketingEthicsEngine
+from ..security.ethics import EthicsVerdict, MarketingEthicsEngine, large_amount
 from ..security.normalize import fold_quotes, normalize
 
 logging.basicConfig(level=logging.INFO)
@@ -105,7 +105,10 @@ def system_prompt(brand: dict | None = None) -> str:
 
 DARK_PATTERNS = {
     "false_urgency": [
-        r"(last\s+chance|act\s+now|don't\s+miss\s+out|expires?\s+soon)",
+        # A lapse notice ("Last chance to keep your monthly gift active") is flagged by the library engine, not
+        # blocked here (2026-11-02 review, R5).
+        r"(last\s+chance(?!\s+to\s+(?:keep|renew|update|reactivate|restore)\s+your\b)|act\s+now|"
+        r"don't\s+miss\s+out|expires?\s+soon)",
         r"(only\s+\d+\s+left|limited\s+time|hurry)",
     ],
     "guilt_manipulation": [
@@ -158,8 +161,9 @@ def _own_ethics_check(content: str) -> tuple[str, str]:
             if pattern.search(content):
                 return "blocked", f"Dark pattern detected: {category}"
 
-    if re.search(r"\$\d{4,}", content):
-        return "flagged", "Contains financial amount >= $1000; needs human review"
+    amount = large_amount(content)      # "$5,000", "$1.2M", "50,000 USD": not only "$" and four digits (R3)
+    if amount:
+        return "flagged", f"Contains financial amount >= $1000 ({amount}); needs human review"
 
     if PUBLIC_COMMS_INSTRUCTION.search(content):
         return "flagged", "Public communication instruction; needs human review"
