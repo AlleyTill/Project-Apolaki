@@ -347,15 +347,17 @@ def test_a_longer_name_that_only_starts_with_theirs_is_not_them(home):
     assert X.plan(PERSON).memories == []
 
 
-def test_the_second_dry_run_catches_what_the_byte_fold_cant(home):
+def test_the_full_fold_catches_what_the_byte_fold_cant(home):
     """A format character the fast byte fold doesn't know (U+110BD, Kaithi number sign) hides the name from the byte
-    check; the second dry run, with the full fold, still finds the memory."""
+    check; the checks with the full fold (every column of every table, and the second dry run) still find it."""
     from apolaki.agent import erase as X
     s = open_store(home)
     s.store("Mari\U000110bdsol Quintero signed up to volunteer.")
     s.close()
     found = X.leftovers([PERSON], home)
-    assert found and all("second dry run" in f for f in found), found
+    assert not [f for f in found if f.endswith("apolaki.db: the name")], found      # the byte check misses it
+    assert any("table memories, column content" in f for f in found), found
+    assert any("second dry run" in f for f in found), found
 
 
 def test_an_idle_connection_left_open_doesnt_leave_old_log_frames(home):
@@ -495,6 +497,286 @@ def db_rows_vec(home, sql):
         return con.execute(sql).fetchall()
     finally:
         con.close()
+
+
+# ---- round 2 (2026-11-03 verifier report): every encoding the store uses, every column of every table ---------------
+MARIA = "Mar\u00eda L\u00f3pez"
+MARIA_BYTES = ("L\u00f3pez".encode(), b"L\\u00f3pez", b"l\\u00f3pez", b"lopez", b"Lopez")
+
+
+def no_vec(monkeypatch):
+    """A store without the vector indexes, so nothing the erase rebuilds (3 MB vec0 chunks) overwrites the file's free
+    pages or its write-ahead log by chance: what each step leaves is what it alone left."""
+    monkeypatch.setattr(ms.ApolakiMemoryStore, "_init_vec", lambda self: setattr(self, "_vec_enabled", False))
+
+
+def raw_db(home, secure_delete=None):
+    con = sqlite3.connect(str(home / "db" / "apolaki.db"))
+    if secure_delete is not None:
+        con.execute(f"PRAGMA secure_delete = {int(secure_delete)}")
+    return con
+
+
+def bytes_naming_maria(home):
+    raw = b"".join(f.read_bytes() for f in (home / "db").iterdir() if f.is_file())
+    return [b for b in MARIA_BYTES if b in raw]
+
+
+def test_a_name_in_non_ascii_tags_is_found_and_erased(home):
+    """store() writes tags with json.dumps, which escapes every non-ASCII letter: L\\u00f3pez on disk."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    tagged = s.store("Volunteer list reviewed.", tags=["contact: " + MARIA])
+    kept = s.store("Brand voice: plain and warm.")
+    s.close()
+    assert db_rows(home, f"SELECT tags FROM memories WHERE id = '{tagged}'")[0][0] == '["contact: Mar\\u00eda L\\u00f3pez"]'
+    p = X.plan(MARIA)
+    assert [m["id"] for m in p.memories] == [tagged]
+    try:
+        X.erase(MARIA, confirm=p.code, by="the data lead", reason="asked to be removed")
+    except X.EraseError as e:
+        pytest.fail(f"the erase didn't complete: {e}")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+    assert bytes_naming_maria(home) == []
+
+
+def test_a_name_in_an_archive_reason_is_found_and_erased(home):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    old = s.store("Old volunteer roster entry.")
+    s.archive_memory(old, reason=MARIA + " asked us to stop using it")
+    kept = s.store("Brand voice: plain and warm.")
+    s.close()
+    p = X.plan(MARIA)
+    assert [(m["id"], m["archived"]) for m in p.memories] == [(old, True)]
+    try:
+        X.erase(MARIA, confirm=p.code, by="the data lead", reason="asked to be removed")
+    except X.EraseError as e:
+        pytest.fail(f"the erase didn't complete: {e}")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+    assert bytes_naming_maria(home) == []
+
+
+def test_a_table_the_erase_doesnt_know_stops_it_before_anything_changes(home):
+    """Every column of every table is read: a name somewhere the erase can't remove it from is listed in the dry run,
+    and the erase refuses rather than finish and leave it."""
+    from apolaki.agent import erase as X
+    plant(home)
+    con = raw_db(home)
+    con.execute("CREATE TABLE campaign_notes (id TEXT PRIMARY KEY, body TEXT)")
+    con.execute("INSERT INTO campaign_notes VALUES ('n1', 'Call Marisol Quintero about the spring appeal.')")
+    con.commit()
+    con.close()
+    p = X.plan(PERSON)
+    assert p.db_other == [{"table": "campaign_notes", "column": "body", "rows": 1}]
+    assert "campaign_notes" in X.describe(p)
+    before = snapshot(home)
+    with pytest.raises(X.EraseError, match="Nothing was removed"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert snapshot(home) == before
+
+
+@pytest.mark.parametrize("column,value", [
+    ("body", "Call Marisol Quintero about the appeal."),
+    ("body", '["contact: Mar\\u00eda L\\u00f3pez"]'),                  # JSON-escaped, as store() writes tags
+    ("body", "Marisol\u00a0Quintero"),                                   # a no-break space
+])
+def test_the_check_reads_every_column_of_every_table(home, column, value):
+    from apolaki.agent import erase as X
+    open_store(home).close()
+    con = raw_db(home)
+    con.execute("CREATE TABLE campaign_notes (id TEXT PRIMARY KEY, body TEXT)")
+    con.execute("INSERT INTO campaign_notes VALUES ('n1', ?)", (value,))
+    con.commit()
+    con.close()
+    found = X.leftovers([PERSON, MARIA], home)
+    assert any("campaign_notes" in f and column in f for f in found), found
+
+
+@pytest.mark.parametrize("sql,params", [
+    # the name at the very start of a column value, after a column ending in a digit (archived_at)
+    ("INSERT INTO memories (id, content, created_at, archived, archived_at, archive_reason) VALUES (?,?,?,?,?,?)",
+     ("m-old", "Old roster entry.", "2026-01-01", 1, "2026-02-01T10:00:00+00:00", MARIA + " asked us to stop")),
+    # the name JSON-escaped, as store() writes tags
+    ("INSERT INTO memories (id, content, tags, created_at) VALUES (?,?,?,?)",
+     ("m-old", "Seating plan.", json.dumps(["guest: " + MARIA]), "2026-01-01")),
+])
+def test_the_byte_check_finds_a_deleted_name_wherever_it_starts_and_however_it_is_escaped(home, monkeypatch, sql,
+                                                                                          params):
+    """Deleted with secure_delete off, the row's bytes stay in the file's free space where no row reads them; the byte
+    check must still find the name, which starts a column value right after other bytes, or is JSON-escaped."""
+    from apolaki.agent import erase as X
+    no_vec(monkeypatch)
+    open_store(home).close()
+    con = raw_db(home, secure_delete=False)
+    con.execute(sql, params)
+    con.commit()
+    con.execute("DELETE FROM memories WHERE id = 'm-old'")
+    con.commit()
+    con.close()
+    assert bytes_naming_maria(home), "the setup lost its point: the deleted bytes aren't in the file"
+    assert db_rows(home, "SELECT count(*) FROM memories")[0][0] == 0
+    found = X.leftovers([MARIA], home)
+    assert any(f.endswith("apolaki.db: the name") for f in found), found
+
+
+def test_a_kept_longer_word_that_contains_the_name_is_not_taken_for_it(home):
+    """The byte check has no word edges (bytes around a column value are anything), so a kept "Quinterova" would read
+    as the name; it is told apart by the kept rows."""
+    from apolaki.agent import erase as X
+    plant(home)
+    s = open_store(home)
+    other = s.store("Marisol Quinterova runs the choir.")
+    s.close()
+    try:
+        X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
+    except X.EraseError as e:
+        pytest.fail(f"a kept longer name was taken for hers: {e}")
+    assert other in {r[0] for r in db_rows(home, "SELECT id FROM memories")}
+
+
+def test_a_chance_match_inside_a_kept_vector_is_not_taken_for_the_name(home):
+    """Float vectors hold a short name's bytes now and then (three letters turn up in megabytes of floats); a kept
+    embedding whose bytes spell the name is kept data, not a trace."""
+    from apolaki.agent import erase as X
+    plant(home)
+    vector = bytearray(fake_embed("Brand voice: plain and warm.").tobytes())
+    vector[100:100 + 18] = b"\x81Marisol Quintero\x82"         # the name's bytes inside a vector, in no text cell
+    con = raw_db(home)
+    con.execute("UPDATE memories SET embedding = ? WHERE content = 'Brand voice: plain and warm.'", (bytes(vector),))
+    con.commit()
+    con.close()
+    try:
+        X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
+    except X.EraseError as e:
+        pytest.fail(f"a kept vector's bytes were taken for her name: {e}")
+
+
+@pytest.mark.parametrize("written", ["Jean Luc Moreau", "Jean-Luc Moreau", "Jean\u2013Luc Moreau", "JeanLuc Moreau",
+                                     "jean_luc_moreau", "JEAN-LUC MOREAU", "Jean\u2011Luc Moreau"])
+@pytest.mark.parametrize("asked", ["Jean-Luc Moreau", "Jean Luc Moreau"])
+def test_hyphen_space_and_joined_forms_of_a_name_are_the_same_name(home, written, asked):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    mid = s.store(f"{written} joined the board.")
+    s.store("Jean-Lucien Moreau and Jean-Luc Moreaux are other people.")
+    s.close()
+    assert [m["id"] for m in X.plan(asked).memories] == [mid]
+
+
+@pytest.mark.parametrize("written", ["Siobhan OBrien", "Siobhan O Brien", "Siobhan O\u2019Brien", "siobhan.obrien"])
+def test_apostrophe_forms_of_a_name_are_the_same_name(home, written):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    mid = s.store(f"Ask {written} about the venue.")
+    s.close()
+    assert [m["id"] for m in X.plan("Siobhan O'Brien").memories] == [mid]
+
+
+def test_a_belief_log_line_naming_the_person_in_a_list_is_redacted_whole(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    with (home / "engine_beliefs_log.jsonl").open("a") as f:
+        f.write(json.dumps({"day": "2026-11-02", "kind": "added", "id": "b3", "tags": ["guest: Marisol Quintero"]})
+                + "\n")
+    try:
+        X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
+    except X.EraseError as e:
+        pytest.fail(f"the erase left the name in the belief log: {e}")
+    assert "arisol" not in (home / "engine_beliefs_log.jsonl").read_text().lower()
+
+
+# Each of the three steps that clear deleted bytes, alone: removing any one of them must fail a test.
+class _VacuumFails(sqlite3.Connection):
+    def execute(self, sql, *args):
+        if sql.strip().upper() == "VACUUM":
+            raise sqlite3.OperationalError("database or disk is full")
+        return super().execute(sql, *args)
+
+
+def test_secure_delete_zeroes_the_deleted_rows_when_vacuum_cant_run(home, monkeypatch):
+    """VACUUM needs free space the size of the database. When it fails, the erase's own secure_delete is what keeps the
+    deleted text out of the file; the erase says it didn't finish, and records it unverified."""
+    from apolaki.agent import erase as X
+    real = sqlite3.connect
+
+    def plant_connect(*a, **k):
+        con = real(*a, **k)
+        con.execute("PRAGMA secure_delete = 1")               # the store's own deletes zeroed, on any build
+        return con
+    monkeypatch.setattr(sqlite3, "connect", plant_connect)
+    plant(home)
+    code = X.plan(PERSON).code
+
+    def erase_connect(*a, **k):
+        con = real(*a, factory=_VacuumFails, **k)
+        con.execute("PRAGMA secure_delete = 0")               # a build whose default is off (macOS may be)
+        return con
+    monkeypatch.setattr(sqlite3, "connect", erase_connect)
+    with pytest.raises(X.EraseError, match="VACUUM"):
+        X.erase(PERSON, confirm=code, by="x", reason="asked")
+    assert all_bytes_naming(home, "marisol", skip=NOT_MEMORY) == []
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is False and any("VACUUM" in p for p in rec["problems"])
+
+
+def test_vacuum_clears_text_an_earlier_delete_left_in_free_pages(home, monkeypatch):
+    """Rows deleted before the erase, where secure_delete was off, leave their text in free pages that no row reads
+    and the erase's own deletes never touch; only rebuilding the file clears them."""
+    from apolaki.agent import erase as X
+    no_vec(monkeypatch)
+    plant(home)
+    con = raw_db(home, secure_delete=False)
+    con.execute("INSERT INTO memories (id, content, created_at) VALUES ('gone', ?, '2026-01-01')",
+                ("Marisol Quintero's old note. " * 300,))
+    con.commit()
+    con.execute("DELETE FROM memories WHERE id = 'gone'")
+    con.commit()
+    con.close()
+    p = X.plan(PERSON)
+    assert "gone" not in {m["id"] for m in p.memories}
+    try:
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    except X.EraseError as e:
+        pytest.fail(f"text an earlier delete left behind is still in the file: {e}")
+    assert all_bytes_naming(home, "marisol", skip=NOT_MEMORY) == []
+
+
+def test_the_write_ahead_log_is_emptied_when_another_connection_keeps_it(home, monkeypatch):
+    """An idle connection keeps the log file when the erase closes; it still holds the frames written when the memories
+    were stored, and nothing but the truncating checkpoint empties it."""
+    from apolaki.agent import erase as X
+    no_vec(monkeypatch)
+    open_store(home).close()
+    idle = sqlite3.connect(str(home / "db" / "apolaki.db"))
+    idle.execute("SELECT count(*) FROM memories").fetchall()
+    try:
+        plant(home)
+        assert b"Marisol" in (home / "db" / "apolaki.db-wal").read_bytes(), "the setup lost its point"
+        try:
+            X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
+        except X.EraseError as e:
+            pytest.fail(f"the erase left the name behind: {e}")
+        assert b"marisol" not in (home / "db" / "apolaki.db-wal").read_bytes().lower()
+    finally:
+        idle.close()
+
+
+def test_a_reader_holding_the_log_makes_the_erase_incomplete_and_says_why(home, monkeypatch):
+    from apolaki.agent import erase as X
+    monkeypatch.setattr(X, "BUSY_TIMEOUT_S", 0.5)                       # the lock wait, not the point here
+    plant(home)
+    code = X.plan(PERSON).code
+    reader = sqlite3.connect(str(home / "db" / "apolaki.db"))
+    reader.execute("BEGIN")
+    reader.execute("SELECT count(*) FROM memories").fetchall()           # a read transaction left open
+    try:
+        with pytest.raises(X.EraseError, match="another connection is reading"):
+            X.erase(PERSON, confirm=code, by="x", reason="asked")
+    finally:
+        reader.close()
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is False
 
 
 # ---- the CLI, and no MCP tool ----------------------------------------------------------------------------------------

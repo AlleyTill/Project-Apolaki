@@ -37,7 +37,16 @@ person, and every other file in `$APOLAKI_HOME` the name appears in. The erase r
 listed, if the code still matches: memories with their embeddings, the person's entities and the entities that came
 only from those memories, graph rows, wiki pages (pages that named the person are rebuilt without them), beliefs,
 and the name in the belief log. It rebuilds the vector indexes, compacts the database so no deleted bytes stay in
-it, then checks byte by byte and with a second dry run. A check that still finds the name is an error.
+it, then checks every text column of every table, the database files byte by byte, the wiki and the belief files, and
+runs a second dry run. A check that still finds the name, or a compaction or log truncation that failed, is an error
+(`ERASE INCOMPLETE`, recorded as not verified), never a success.
+
+What counts as the name: case, accents, look-alike letters and invisible characters don't matter; the parts of a name
+may be joined by spaces, hyphens or dashes, apostrophes, full stops, underscores or nothing ("Jean-Luc Moreau" also
+finds "Jean Luc Moreau", "JeanLuc Moreau" and "jean_luc_moreau"); escaped text is read decoded (the store writes tags
+as JSON, so "L\u00f3pez" on disk is "López"). A longer name that only contains the one given ("Quinterova") is
+someone else. If the dry run finds the name in a table or column the erase doesn't remove from, it lists it and the
+erase refuses until a person has dealt with it.
 
 What it leaves to a person: the files the dry run lists as "not erased" (approval-queue items, grant-hunt files, the
 quarantine, logs, backups). They are records of what was drafted, reviewed or received, and are edited or deleted

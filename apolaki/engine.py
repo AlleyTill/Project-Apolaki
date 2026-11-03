@@ -257,13 +257,14 @@ def main(argv=None) -> int:
                 return 0
             done = X.erase(a.name, tuple(a.alias), confirm=a.confirm, by=a.by, reason=a.reason)
         except X.EraseError as e:
-            print(f"not erased: {e}" if "check still reads" not in str(e) else f"ERASE INCOMPLETE: {e}",
-                  file=sys.stderr)
-            return 1 if "check still reads" in str(e) else 2
+            incomplete = isinstance(e, X.EraseIncomplete)
+            print(f"ERASE INCOMPLETE: {e}" if incomplete else f"not erased: {e}", file=sys.stderr)
+            return 1 if incomplete else 2
         c = done["counts"]
         print(f"erased: {c['memories']} memories, {c['entities']} entities, {c['mentions']} mentions, "
               f"{c['triples']} triples, {c['wiki_pages']} wiki pages and {c['wiki_files']} wiki files touched, "
-              f"{c['beliefs']} beliefs; checked byte for byte; recorded in {done['ledger']} without the name")
+              f"{c['beliefs']} beliefs; checked every text column of every table, the database files byte for byte, "
+              f"the wiki and the belief files; recorded in {done['ledger']} without the name")
         if done["elsewhere"]:
             print(f"still named in {len(done['elsewhere'])} file(s) that aren't memory (not touched): "
                   + ", ".join(path for path, _ in done["elsewhere"]))
