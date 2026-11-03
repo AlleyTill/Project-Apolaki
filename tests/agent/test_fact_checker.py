@@ -215,7 +215,10 @@ def test_a_claim_with_an_unknown_classification_is_listed_not_lost(monkeypatch, 
     f.write_text("Our clinic served 450 families.")
     fake_model(monkeypatch, [answer([{"claim": "450 families", "classification": "UNSOURCED"},
                                      {"claim": "a SUSPECT claim with no reason", "classification": "SUSPECT"}])])
-    report = fc.check_file(str(f))
+    try:
+        report = fc.check_file(str(f))
+    except Exception as e:     # noqa: BLE001 - a claim missing a field must not break the report
+        pytest.fail(f"the report broke on a claim with a missing field: {e!r}")
     out = capsys.readouterr().out
     assert [c["claim"] for c in report["unclassified"]] == ["450 families"]
     assert "UNCLASSIFIED" in out and "450 families" in out

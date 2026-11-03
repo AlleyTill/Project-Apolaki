@@ -113,10 +113,28 @@ BAD_TYPES = ["../outside", "..", "a/b", "a\\b", "", ".hidden", "so cial", "socia
 @pytest.mark.parametrize("content_type", BAD_TYPES, ids=repr)
 def test_a_content_type_that_isnt_a_plain_name_is_refused_and_nothing_is_written(home, content_type):
     from apolaki.agent import agent as A
-    with pytest.raises(ValueError, match="content type"):
+    try:
         A.queue_for_approval("a post", content_type)
+    except Exception as e:     # noqa: BLE001 - an OS error from the bad name is not the refusal
+        refusal = e
+    else:
+        refusal = None
+    assert isinstance(refusal, ValueError) and "content type" in str(refusal), f"not the refusal: {refusal!r}"
     written = [p for p in home.rglob("*") if p.is_file()]
     assert written == [], written
+
+
+def test_a_content_type_cant_climb_out_of_the_queue_folder(home, monkeypatch):
+    """With a folder named like the next item's prefix in place, "x/../../escaped" would write home/escaped.json."""
+    from apolaki.agent import agent as A
+    frozen_clock(monkeypatch, A)
+    (home / "approval-queue" / "20261102_200000_x").mkdir(parents=True)
+    try:
+        A.queue_for_approval("a post", "x/../../escaped")
+    except ValueError:
+        pass
+    assert not (home / "escaped.json").exists(), "the item was written outside approval-queue/"
+    assert [p for p in home.rglob("*") if p.is_file()] == []
 
 
 @pytest.mark.parametrize("content_type", ["social", "grant", "blog_post", "web-page", "LinkedIn", "x" * 40, "unknown"])

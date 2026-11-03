@@ -371,3 +371,22 @@ def test_the_agent_refuses_a_bad_revision_budget_itself_before_any_call(monkeypa
     with pytest.raises(ValueError, match="revise_max_tokens"):
         real_agent(A).draft_content("Announce the clinic", "grant", revise_max_tokens=bad)
     assert calls == []
+
+
+# ---- the content type is checked before the intention is recorded (2026-11-03) ------------------------------------
+def test_a_bad_content_type_is_refused_before_any_intention_or_call(home):
+    """It ends up in the queue's file name. Refused inside the chip, it would leave the intention ACTIVE forever."""
+    agent = FakeAgent()
+    e = engine(home, agent)
+    with pytest.raises(ValueError, match="content type"):
+        e.draft("Announce the clinic", "../outside")
+    assert e.bdi.list_intentions() == [] and agent.calls == []
+
+
+def test_the_cli_reports_a_bad_content_type_and_exits_2(home, monkeypatch, capsys):
+    import apolaki.engine as E
+    agent = FakeAgent()
+    real_init = E.ApolakiEngine.__init__
+    monkeypatch.setattr(E.ApolakiEngine, "__init__", lambda self, learn=False: real_init(self, agent, learn=learn))
+    assert E.main(["draft", "Announce the clinic", "--type", "../outside"]) == 2
+    assert "content type" in capsys.readouterr().err and agent.calls == []

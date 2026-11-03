@@ -179,6 +179,7 @@ class ApolakiEngine:
                 raise ValueError(f"{name} must be a positive integer, not {value!r}")
         if not isinstance(think, bool):
             raise TypeError(f"think must be True or False, not {think!r}")
+        config.check_content_type(content_type)     # it names the queue file; refused here, before the intention
         stop.check("draft")         # a person's STOP file: no draft starts and nothing is learned (apolaki.stop)
         feedback, used = "", []
         report = {"asked": self.learn, "used": False, "why_not": None, "added": 0, "held_back": 0}
@@ -299,6 +300,9 @@ def main(argv=None) -> int:
     except stop.StopRequested as e:
         print(f"stopped: {e}", file=sys.stderr)
         return 3
+    except ValueError as e:         # a bad --type or --max-tokens, refused before any work
+        print(f"not drafted: {e}", file=sys.stderr)
+        return 2
     print(out.get("draft", ""))
     print(f"\n[{out.get('status')}; queue {out.get('queue_id')}; reviewer feedback used: {out['reviewer_feedback_used']}]",
           file=sys.stderr)
