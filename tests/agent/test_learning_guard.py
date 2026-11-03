@@ -219,7 +219,10 @@ def test_the_limits_are_read_when_the_beliefs_are_admitted_too(home, monkeypatch
     decision(home, 1)
     agent = FakeAgent()
     e = engine(agent)
-    out = e.draft("A", "social")
+    try:
+        out = e.draft("A", "social")
+    except Exception as exc:                                    # the refusal is reported, the draft still runs
+        pytest.fail(f"the draft raised {exc!r} instead of drafting with learning off")
     assert e.bdi.list_beliefs() == [] and agent.calls[0]["reviewer_feedback"] == ""
     assert out["learning"]["used"] is False and "daily_cap" in out["learning"]["why_not"]
 
