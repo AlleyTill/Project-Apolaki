@@ -43,7 +43,9 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
 - **Runs on the Kintsugi engine.** Each request is a BDI intention carried out by a skill chip from a Kintsugi skill
   registry (Rivet's pattern). Kintsugi's BDI and skill modules are vendored, so a bare install works, and a Kintsugi
   checkout (`KINTSUGI_PATH`) takes precedence when there is one.
-- **An MCP server** exposes the memory store to other tools.
+- **An MCP server** exposes the memory store to other tools. It can't write a house rule (a brand or guideline
+  memory goes into every system prompt), and it checks the rest of what it stores against its schema. A person
+  adds house rules at the interactive agent's `/rule` command.
 
 ## What it is designed to grow into
 
@@ -66,7 +68,7 @@ cp brand.example.json ~/.apolaki/brand.json   # then make it yours: name, voice,
 python -m apolaki.engine draft "BRIEF" --type social     # one draft, through the engine
 python -m apolaki.engine review QUEUE_ID rejected "NOTE"  # record a reviewer's decision
 python -m apolaki.engine requeue QUEUE_ID                 # an edited item becomes a new item to review
-python -m apolaki.agent.agent                 # the interactive agent
+python -m apolaki.agent.agent                 # the interactive agent (/rule TEXT adds a house rule)
 python -m apolaki.agent.style_pass draft.md   # the judgement pass on a finished piece
 python -m apolaki.agent.fact_checker draft.md # the fact checker
 ```

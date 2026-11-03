@@ -841,6 +841,7 @@ def main():
     print("Type /queue to see approval queue")
     print("Type /search <query> to search memory")
     print("Type /remember <text> to store a decision memory (explicit; nothing is auto-stored)")
+    print("Type /rule <text> to add a house rule (a guideline: it goes into every system prompt from now on)")
     print("Type /rules to print the house rules the model sees")
     print("Type /wiki <entity> to generate wiki page")
     print("Type /bye to exit")
@@ -894,6 +895,17 @@ def main():
         if user_input.startswith("/remember "):
             mid = agent.remember(user_input[10:])
             print(f"Stored decision memory {mid[:8]}.")
+            continue
+
+        if user_input == "/rule" or user_input.startswith("/rule "):
+            # The one way to set a house rule from the CLI: a person at the keyboard. The MCP server refuses brand and
+            # guideline memories, and its refusal points here.
+            text = user_input[6:].strip()
+            if not text:
+                print("Usage: /rule <text>")
+                continue
+            mid = agent.remember(text, memory_type="guideline", tags=["house-rule", "cli"], source="CLI /rule")
+            print(f"Stored house rule {mid[:8]}; the system prompt now carries {agent.house_rules_count} house rule(s).")
             continue
 
         if user_input == "/rules":
