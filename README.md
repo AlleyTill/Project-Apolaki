@@ -25,6 +25,9 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
     deceptive or inflated metrics.
   - *Sent for human review:* large financial asks, instructions to publish or post on the organization's behalf,
     sensitive political topics, sharing data with outside parties.
+  - They run on every brief before the model is called, on every draft, and in the interactive chat on each message
+    (a blocked message never reaches the model) and on each reply. A blocked reply gets one revision, checked again;
+    if it is still blocked, the chat answers with a refusal and the reason, never the blocked text.
 - **An approval queue.** Nothing is published by Apolaki. Every draft lands in the queue with its ethics verdict,
   its lint results and the sha256 of its text, and a person approves it. An approval is of that exact text: if the
   text has changed since it was queued, the approval is refused until the item is re-queued as a new item with its

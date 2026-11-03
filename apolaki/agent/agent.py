@@ -629,6 +629,18 @@ class ApolakiAgent:
     # -- conversation --
 
     def respond(self, user_message: str, n_memories: int = 4) -> str:
+        """One chat turn (the CLI's default for anything that isn't a slash command).
+
+        The message gets the same ethics check as a brief, before memory is searched or the model is called. A blocked
+        message is refused with the reason and isn't kept in the history, where it would reach the model with the
+        next message. A reply the check blocks gets one revision, and the revision is checked again: if it is still
+        blocked, or the revision call fails, the answer is a refusal with the reason, never the blocked text, and the
+        history keeps the refusal in its place. A flagged message or reply goes through: the person it would be flagged
+        for is the one at the keyboard. (2026-11-02 review: this path checked neither the message nor the revision.)"""
+        verdict, reason = ethics_check(user_message)
+        if verdict == "blocked":
+            return f"[Refused: the request was blocked by the ethics check ({reason}). Nothing was sent to the model.]"
+
         results = self.memory.search(user_message, n_results=n_memories)
         block = build_retrieved_block(results, RETRIEVAL_NOTE)
         call_message = user_message + ("\n\n" + block if block else "")
@@ -639,6 +651,7 @@ class ApolakiAgent:
         if is_llm_error(response):
             return response
 
+        refused = False
         verdict, reason = ethics_check(response)
         if verdict == "blocked":
             alt = chat(self.history + [
@@ -646,13 +659,21 @@ class ApolakiAgent:
                 {"role": "assistant", "content": response},
                 {"role": "user", "content": f"That response was blocked by ethics ({reason}). Please revise without dark patterns."},
             ])
-            if not is_llm_error(alt):
-                response = alt
+            if is_llm_error(alt):
+                refused, response = True, (f"[Refused: the reply was blocked by the ethics check ({reason}), and the "
+                                           f"revision failed: {alt or 'no text'}]")
+            else:
+                v2, r2 = ethics_check(alt)
+                if v2 == "blocked":
+                    refused, response = True, (f"[Refused: the reply was blocked by the ethics check ({reason}), and "
+                                               f"so was its revision ({r2}).]")
+                else:
+                    response = alt
 
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": response})
 
-        if self.auto_capture and _should_auto_capture(user_message, response):
+        if self.auto_capture and not refused and _should_auto_capture(user_message, response):
             self.memory.store(
                 f"Decision/strategy discussion: {user_message[:100]}... Response: {response[:200]}...",
                 memory_type="decision", significance=0.5,
