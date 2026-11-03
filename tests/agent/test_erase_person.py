@@ -177,6 +177,17 @@ def test_the_code_binds_the_erase_to_what_the_dry_run_listed(home):
     assert snapshot(home)[1] == before[1] and len(db_rows(home, "SELECT id FROM memories")) == 9
 
 
+def test_a_new_memory_alone_changes_the_code(home):
+    """A memory that names her only in its tags adds no graph row: the code must still change."""
+    from apolaki.agent import erase as X
+    plant(home)
+    code = X.plan(PERSON).code
+    s = open_store(home)
+    s.store("Seating plan for the gala.", tags=["guest: Marisol Quintero"])
+    s.close()
+    assert X.plan(PERSON).code != code
+
+
 @pytest.mark.parametrize("kw,match", [({"by": " "}, "who"), ({"reason": ""}, "why")])
 def test_an_erase_needs_who_and_why(home, kw, match):
     from apolaki.agent import erase as X
@@ -334,6 +345,59 @@ def test_a_longer_name_that_only_starts_with_theirs_is_not_them(home):
     s.store("AMarisol Quintero is a typo here.")
     s.close()
     assert X.plan(PERSON).memories == []
+
+
+def test_the_second_dry_run_catches_what_the_byte_fold_cant(home):
+    """A format character the fast byte fold doesn't know (U+110BD, Kaithi number sign) hides the name from the byte
+    check; the second dry run, with the full fold, still finds the memory."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store("Mari\U000110bdsol Quintero signed up to volunteer.")
+    s.close()
+    found = X.leftovers([PERSON], home)
+    assert found and all("second dry run" in f for f in found), found
+
+
+def test_an_idle_connection_left_open_doesnt_leave_old_log_frames(home):
+    """With another connection open the write-ahead log isn't removed when the erase closes, and it still holds the
+    frames written when the memories were stored; the erase has to empty it."""
+    from apolaki.agent import erase as X
+    open_store(home).close()                                     # the database, in WAL mode
+    idle = sqlite3.connect(str(home / "db" / "apolaki.db"))
+    idle.execute("SELECT count(*) FROM memories").fetchall()     # attached to the log, holding no transaction
+    try:
+        plant(home)
+        assert b"Marisol" in (home / "db" / "apolaki.db-wal").read_bytes(), "the setup lost its point"
+        try:
+            X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
+        except X.EraseError as e:
+            pytest.fail(f"the erase left the name behind: {e}")
+        assert b"marisol" not in (home / "db" / "apolaki.db-wal").read_bytes().lower()
+    finally:
+        idle.close()
+
+
+def test_wiki_files_named_for_the_person_or_an_erased_entity_go_even_when_their_text_doesnt_name_her(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    (home / "wiki" / "marisol_quintero_notes.md").write_text("Notes from the March meeting.\n")
+    (home / "wiki" / "lincoln_elementary.md").write_text("# Lincoln Elementary\n")           # an orphan's page
+    con = sqlite3.connect(str(home / "db" / "apolaki.db"))
+    con.execute("DELETE FROM wiki_pages WHERE title = 'Lincoln Elementary'")                # its row long gone
+    con.commit()
+    con.close()
+    files = {f["file"]: f["action"] for f in X.plan(PERSON).wiki_files}
+    assert files.get("marisol_quintero_notes.md") == "remove" and files.get("lincoln_elementary.md") == "remove"
+
+
+def test_a_belief_file_that_cant_be_read_stops_the_erase_before_anything_changes(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    (home / "engine_beliefs.json").write_text("{not json")
+    before = len(db_rows(home, "SELECT id FROM memories"))
+    with pytest.raises(X.EraseError, match="can't be read"):
+        X.plan(PERSON)
+    assert len(db_rows(home, "SELECT id FROM memories")) == before
 
 
 def test_an_erase_whose_check_finds_the_name_is_an_error_not_a_success(home, monkeypatch):
