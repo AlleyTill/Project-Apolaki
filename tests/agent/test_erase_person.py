@@ -395,9 +395,35 @@ def test_a_belief_file_that_cant_be_read_stops_the_erase_before_anything_changes
     plant(home)
     (home / "engine_beliefs.json").write_text("{not json")
     before = len(db_rows(home, "SELECT id FROM memories"))
-    with pytest.raises(X.EraseError, match="can't be read"):
+    try:
         X.plan(PERSON)
+    except X.EraseError as e:
+        assert "can't be read" in str(e)
+    except Exception as e:                                       # noqa: BLE001
+        pytest.fail(f"an unreadable belief file broke the dry run instead of stopping it: {e!r}")
+    else:
+        pytest.fail("the dry run went ahead with an unreadable belief file")
     assert len(db_rows(home, "SELECT id FROM memories")) == before
+
+
+def test_no_deleted_bytes_stay_where_sqlite_doesnt_zero_them_by_default(home, monkeypatch):
+    """Ubuntu's SQLite is built with secure_delete on, macOS builds may not be: with every connection's default
+    turned off, the erase's own secure_delete and VACUUM still leave none of the deleted text in the file."""
+    from apolaki.agent import erase as X
+    plant(home)
+    real = sqlite3.connect
+
+    def connect(*a, **k):
+        con = real(*a, **k)
+        con.execute("PRAGMA secure_delete = 0")
+        return con
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    code = X.plan(PERSON).code
+    try:
+        X.erase(PERSON, confirm=code, by="x", reason="asked")
+    except X.EraseError as e:
+        pytest.fail(f"deleted bytes stayed in the database: {e}")
+    assert all_bytes_naming(home, "marisol", skip=NOT_MEMORY) == []
 
 
 def test_an_erase_whose_check_finds_the_name_is_an_error_not_a_success(home, monkeypatch):
