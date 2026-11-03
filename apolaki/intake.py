@@ -87,6 +87,8 @@ def scan(text: str) -> list[str]:
     """Garuda Layer 1's patterns that fire on the text or on its normalised form, in pattern order."""
     if not text:
         return []
+    # The raw scan is kept so the screen never rests on normalize() alone. No text is known that it catches and the
+    # normalised scan misses, so a mutant that drops it lives; that is why.
     raw = layer1(text)
     folded = layer1(normalize(text))
     return raw + [p for p in folded if p not in raw]
