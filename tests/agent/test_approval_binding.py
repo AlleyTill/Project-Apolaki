@@ -105,6 +105,51 @@ def test_a_file_written_between_the_id_check_and_the_write_is_not_replaced(home,
     assert contents == ["first draft", "second draft"]
 
 
+# ---- the content type goes into a file name, so it is a closed set of characters (2026-11-03 design read) ----------
+BAD_TYPES = ["../outside", "..", "a/b", "a\\b", "", ".hidden", "so cial", "social\n", "social\x00", "x" * 41,
+             "-social", "social.json"]
+
+
+@pytest.mark.parametrize("content_type", BAD_TYPES, ids=repr)
+def test_a_content_type_that_isnt_a_plain_name_is_refused_and_nothing_is_written(home, content_type):
+    from apolaki.agent import agent as A
+    with pytest.raises(ValueError, match="content type"):
+        A.queue_for_approval("a post", content_type)
+    written = [p for p in home.rglob("*") if p.is_file()]
+    assert written == [], written
+
+
+@pytest.mark.parametrize("content_type", ["social", "grant", "blog_post", "web-page", "LinkedIn", "x" * 40, "unknown"])
+def test_a_plain_content_type_is_queued(home, content_type):
+    from apolaki.agent import agent as A
+    item_id = A.queue_for_approval("a post", content_type)
+    assert path_of(home, item_id).name == f"{item_id}_{content_type}.json"
+
+
+def test_a_brief_with_a_bad_content_type_is_refused_before_the_model_is_called(home, monkeypatch):
+    from apolaki.agent import agent as A
+    monkeypatch.setattr(A, "chat", lambda *a, **k: pytest.fail("the model was called"))
+    class Memory:
+        def search(self, query, n_results=6):
+            return []
+    agent = object.__new__(A.ApolakiAgent)
+    agent.memory, agent.history, agent.auto_capture, agent.house_rules_count = Memory(), [], False, 0
+    with pytest.raises(ValueError, match="content type"):
+        agent.draft_content("Announce the clinic.", content_type="../../etc/x")
+
+
+def test_the_discord_hook_refuses_a_bad_content_type_before_writing(home, monkeypatch):
+    """It writes long drafts to approval-queue/<id>_<type>.md, the same path shape."""
+    from apolaki.agent import discord_hook as D
+    monkeypatch.setattr(D, "DISCORD_TOKEN", "test-token-not-real")
+    monkeypatch.setattr(D, "ADMIN_CHANNEL_ID", "123")
+    monkeypatch.setattr(D, "APPROVAL_DIR", home / "approval-queue")
+    monkeypatch.setattr(D.requests, "post", lambda *a, **k: pytest.fail("posted"))
+    with pytest.raises(ValueError, match="content type"):
+        D.post_for_review("x" * 3000, content_type="../outside", queue_id="20261103_000000")
+    assert not [p for p in home.rglob("*") if p.is_file()]
+
+
 # ---- review_item checks the hash before it records an approval -----------------------------------------------------
 def test_an_unedited_item_is_approved_and_the_approval_names_the_hash(home):
     from apolaki.agent.agent import queue_for_approval, review_item

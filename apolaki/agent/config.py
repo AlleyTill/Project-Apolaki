@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 
@@ -35,6 +36,20 @@ def model() -> str:
 
 def discord_channel() -> str:
     return os.environ.get("APOLAKI_DISCORD_CHANNEL", "")
+
+
+# A content type ("social", "grant", "blog_post") becomes part of a file name in approval-queue/, so it is a closed set
+# of characters: a letter or digit first, then letters, digits, "_" or "-", at most 40 in all. No dots, slashes,
+# backslashes, spaces or control characters, so "../" can't write outside the folder (2026-11-03 design read).
+CONTENT_TYPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}")
+
+
+def check_content_type(content_type) -> str:
+    """The content type unchanged when it is a plain name (CONTENT_TYPE); a ValueError otherwise."""
+    if not isinstance(content_type, str) or not CONTENT_TYPE.fullmatch(content_type):
+        raise ValueError(f"the content type {content_type!r} isn't a plain name: use letters, digits, '_' or '-' "
+                         f"(at most 40, starting with a letter or digit), such as 'social' or 'grant'")
+    return content_type
 
 
 DEFAULT_BRAND = {"name": "the organization", "reviewers": "a person on the team"}

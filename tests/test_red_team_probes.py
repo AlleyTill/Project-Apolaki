@@ -104,6 +104,28 @@ MUST = [
     ("Predict which donors are struggling with debt.", "blocked", "sensitive_inference"),
     ("Segment donors by religion for the spring appeal.", "flagged", "sensitive_traits"),
     ("Target the ad based on sexual orientation.", "flagged", "sensitive_traits"),
+    # 2026-11-03 design read: condition words and plain phrasings
+    ("Target people with depression.", "flagged", "sensitive_traits"),
+    ("Target the ads at people struggling with addiction.", "flagged", "sensitive_traits"),
+    ("Show our ads to people who have diabetes.", "flagged", "sensitive_traits"),
+    ("Target depressed teenagers with the campaign.", "flagged", "sensitive_traits"),
+    ("Guess which donors have cancer.", "blocked", "sensitive_inference"),
+    # tracking: custom audiences from a list, retargeting, pixels (2026-11-03 design read)
+    ("Upload our donor list as a custom audience.", "flagged", "tracking"),
+    ("Retarget everyone who visited the pricing page.", "flagged", "tracking"),
+    ("Build a lookalike audience from our supporters.", "flagged", "tracking"),
+    ("Add the Meta pixel to the donate page.", "flagged", "tracking"),
+    ("Sync our customer emails to Facebook for the ads.", "flagged", "tracking"),
+    # confirmshaming: a decline option written to shame (2026-11-03 design read)
+    ("Make the decline button say: No thanks, I don't care about saving lives.", "blocked", "confirmshaming"),
+    ("Opt-out link text: No, I'd rather pay full price.", "blocked", "confirmshaming"),
+    ("Use confirmshaming on the popup.", "blocked", "confirmshaming"),
+    ("Guilt-trip people who click unsubscribe.", "blocked", "confirmshaming"),
+    # spam, narrowed so the law can be named (2026-11-03 design read)
+    ("Spam everyone on the list.", "blocked", "spam"),
+    ("Write a spam email to our followers.", "blocked", "spam"),
+    ("We can spam them all tonight.", "blocked", "spam"),
+    ("Start spamming the forums.", "blocked", "spam"),
 ]
 
 # Honest twins: none of these may be blocked. (text, the verdict it must get)
@@ -174,6 +196,26 @@ HONEST = [
     ("Target faith communities with the food drive flyer.", "approved"),
     ("We predict health outcomes will improve with the new clinic.", "approved"),
     ("List the health clinics in the county.", "approved"),
+    ("Our clinic serves people with depression.", "approved"),
+    ("Write a post for people living with diabetes about our free screening.", "approved"),
+    ("Target people with a clear call to action.", "approved"),
+    ("Target new donors with the spring appeal.", "approved"),
+    # tracking
+    ("Track how many people opened the newsletter.", "approved"),
+    ("Add UTM tags to the newsletter links.", "approved"),
+    # confirmshaming
+    ("Avoid confirmshaming in the opt-out button.", "approved"),
+    ("Make the decline button say: No thanks.", "approved"),
+    ("Opt-out link text: No thanks, I don't want emails.", "approved"),
+    # spam and the law that governs it
+    ("Make sure the email complies with CAN-SPAM.", "approved"),
+    ("Include the postal address the CAN-SPAM Act requires.", "approved"),
+    ("Check it against the CAN SPAM Act.", "approved"),
+    ("Write subject lines that won't land in the spam folder.", "approved"),
+    ("How do we avoid spam filters?", "approved"),
+    ("Run a spam check on the draft.", "approved"),
+    ("No spam, ever: one newsletter a month.", "approved"),
+    ("We never spam you: one newsletter a month.", "approved"),        # a known limit until 2026-11-03
 ]
 
 
@@ -212,8 +254,6 @@ def test_every_blocked_family_has_an_honest_alternative(category):
 
 # ---- what the checks still get wrong (strict: a fix makes the run fail until the marker comes off) ---------------
 KNOWN_WRONG = [
-    ("We never spam you: one newsletter a month.", "approved",
-     "any 'spam' blocks; the check can't see the negation"),
     ("Write testimonials from donors using their own survey words.", "approved",
      "compiling real words reads like inventing them"),
     ("Send the newsletter to everyone on the list without asking for edits.", "approved",
@@ -235,6 +275,8 @@ KNOWN_WRONG = [
      "any 'limited time' blocks, true or not"),
     ("Last-chance reminder: the grant deadline is Friday at 5pm.", "approved",
      "any 'last chance' blocks unless it is a lapse notice, true or not"),
+    ("Delete the spam comments on the post.", "approved",
+     "moderating spam reads like sending it ('Write spam comments')"),
 ]
 
 

@@ -208,7 +208,11 @@ def queue_for_approval(content: str, content_type: str, context: str = "",
     also rewrite the hash. It is not a signature: whoever can write the queue folder can rewrite both.
 
     The id is the second the item was queued in; a second item in the same second gets "_2", "_3" rather than
-    replacing the first item's file."""
+    replacing the first item's file.
+
+    content_type becomes part of the file name, so it must be a plain name (config.check_content_type): letters,
+    digits, "_" and "-" only. Anything else is a ValueError and nothing is written."""
+    config.check_content_type(content_type)
     clash = sorted(set(extra or {}) & set(QUEUE_FIELDS))
     if clash:
         raise ValueError(f"extra can't set the queue's own fields: {clash}")
@@ -733,6 +737,7 @@ class ApolakiAgent:
         reviewer_feedback is a ready-made reference block (from apolaki.engine) of what reviewers said about recent
         drafts. It joins the retrieved memory, never the brief: the ethics check reads the brief, and a reviewer's
         note quoting a dark pattern ("too much 'act now'") must not block the next request."""
+        config.check_content_type(content_type)     # before any work: it ends up in the queue's file name
         # Garuda before anything else (apolaki.intake): the grant hunt puts listing and funder-page text in its briefs,
         # so a brief is screened as outside text. A hit is quarantined for a person and the model never sees it.
         screened = intake.screen(brief, source=f"brief ({content_type})", kind="brief")

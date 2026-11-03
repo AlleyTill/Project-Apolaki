@@ -49,9 +49,23 @@ _PERSONS = _PERSONA[:-1] + r")s?"
 # Between the halves of "limited-time", "last-chance", "crossed-out": spaces, an ASCII hyphen or a Unicode one.
 _HY = r"[\s\-\u2010-\u2015]+"
 # Sensitive traits (marketingskills prospecting: never target or infer them).
+# Health conditions by name, since people say "people with depression", not "people with a health condition".
+_CONDITIONS = (r"(?:depression|anxiety|addiction|alcoholism|substance\s+(?:use|abuse)|mental\s+(?:health|illness)"
+               r"(?:\s+(?:conditions?|issues|problems))?|cancer|diabetes|hiv|dementia|alzheimer'?s|autism|adhd|"
+               r"bipolar(?:\s+disorder)?|schizophrenia|ptsd|eating\s+disorders?|anorexia|bulimia|obesity|"
+               r"chronic\s+(?:illness|pain|conditions?)|terminal\s+illness|infertility|miscarriages?|"
+               r"suicidal\s+(?:thoughts|ideation)|self[-\s]harm|gender\s+identity|criminal\s+(?:records?|histor(?:y|ies)))")
 _TRAITS = (r"(?:health(?:\s+conditions?)?|medical|diagnos\w*|disabilit\w*|pregnan\w*|sexual(?:ity|\s+orientation)|"
            r"religio\w*|faith|political\s+(?:views?|leanings?|affiliations?)|politics|ethnicity|race|"
-           r"immigration\s+status|financial\s+hardship|debt|bankrupt\w*)")
+           r"immigration\s+status|financial\s+hardship|debt|bankrupt\w*|" + _CONDITIONS[3:-1] + r")")
+# The same traits as words for people ("depressed teenagers"), for targeting only: as adjectives they turn up in
+# ordinary sentences too often to block an inference on ("Guess who is marching in the pride parade").
+_TRAIT_ADJECTIVES = (r"(?:depressed|anxious|diabetic|bipolar|autistic|suicidal|pregnant|disabled|addicted|"
+                     r"terminally\s+ill|chronically\s+ill|mentally\s+ill|gay|lesbian|bisexual|transgender|queer|"
+                     r"muslim|jewish|christian|catholic|hindu|sikh|buddhist|atheist|undocumented|bankrupt)")
+_PEOPLE_WORDS = (r"(?:people|persons|users|customers|donors|members|visitors|prospects|audiences?|women|men|teens|"
+                 r"teenagers|youth|kids|children|parents|mothers|fathers|moms|dads|patients|folks|individuals|adults|"
+                 r"seniors|students|voters|families|households|immigrants|veterans|employees|workers)")
 
 _DARK_PATTERNS = {
     "false_urgency": [
@@ -71,6 +85,21 @@ _DARK_PATTERNS = {
         r"(how\s+can\s+you\s+(sleep|live).*knowing)",
         r"(their\s+blood\s+is\s+on\s+your\s+hands)",
         r"(you're\s+the\s+only\s+one\s+who\s+can)",
+    ],
+    # A decline option worded to shame the person who picks it ("No thanks, I don't care about saving lives"), and
+    # instructions to write one. Naming it to avoid it ("Avoid confirmshaming") is not one.
+    "confirmshaming": [
+        r"\bno(?:pe)?[,.!]?\s+(?:thanks|thank\s+you)?[,.!]?\s*i(?:'d|\s+would)\s+rather\b",
+        r"\bno(?:pe)?[,.!]?\s+(?:thanks|thank\s+you)?[,.!]?\s*i\s+(?:don't|do\s+not)\s+"
+        r"(?:care\s+about|want\s+to|like|support|need)\s+(?:\w+\s+){0,2}?"
+        r"(?:sav|help|support|protect|feed|learn|grow|improv|succe|win|children|kids|animals|planet|environment|"
+        r"community|cause|money|deals?\b|discounts?\b|famil)\w*",
+        r"(?<!\bavoid\s)(?<!\bno\s)(?<!\bnot\s)(?<!\bnever\s)(?<!\bwithout\s)(?<!n't\s)\bconfirm[-\s]?sham\w*",
+        r"(?<!\bnot\s)(?<!\bnever\s)(?<!n't\s)\bguilt[-\s]?trip\w*\b[^.]{0,40}"
+        r"\b(?:opt[-\s]?outs?|declin\w*|unsubscrib\w*|no\s+button|cancel\w*|leav\w*)",
+        r"\bshame\w*\s+(?:people|users|visitors|donors|them|readers|customers|subscribers)\b[^.]{0,30}"
+        r"\b(?:for|into|who)\b[^.]{0,30}\b(?:declin\w*|leav\w*|unsubscrib\w*|saying\s+no|opt\w*\s+out|cancel\w*|"
+        r"not\s+(?:donat|giv|sign)\w*)",
     ],
     "astroturfing": [
         r"(fake\s+grassroots)",
@@ -197,7 +226,13 @@ _DARK_PATTERNS = {
         r"visitors?|their|whose|each|who)\b[^.]{0,40}\b" + _TRAITS + r"\b",
     ],
     "spam": [
-        r"(mass\s+email|blast\s+to\s+all|email\s+bomb|spam)",
+        r"(mass\s+email|blast\s+to\s+all|email\s+bomb)",
+        # Any "spam", except the law that governs it (CAN-SPAM, the CAN SPAM Act), the tools that catch it (spam
+        # folder, filter, check, score...), "anti-spam", and a negation ("We never spam you", "No spam, ever"). The
+        # 2026-11-03 design read: no output could name the US law while bare "spam" blocked.
+        r"(?<!\bcan-)(?<!\bcan\u2010)(?<!\banti-)(?<!\banti\s)(?<!\bnever\s)(?<!\bnot\s)(?<!n't\s)(?<!\bno\s)"
+        r"\bspam(?:s|med|ming|mer|mers)?\b(?![-\s]*(?:filters?|folders?|traps?|laws?|act\b|rules?|complaints?|scores?|"
+        r"checks?|checkers?|compliance|box(?:es)?|reports?|free\b|regulations?|requirements?|provisions?)\b)",
         r"(scrape\s+(email|contact|profile)s?)",
         r"(buy\s+(email\s+)?list|purchased\s+contacts?)",
         r"(unsolicited\s+(mass|bulk))",
@@ -258,6 +293,30 @@ _ESCALATION_TRIGGERS = {
     "sensitive_traits": [
         r"\b(?:target|segment|filter|sort|rank|profile|exclude|select)\w*\b[^.]{0,60}"
         r"\b(?:by|based\s+on|according\s+to|using)\s+(?:their\s+)?(?:\w+\s+){0,2}?" + _TRAITS + r"\b",
+        # Plain phrasings (2026-11-03 design read): "Target people with depression", "Show our ads to people who have
+        # diabetes", "Target depressed teenagers".
+        r"\b(?:target|segment|profile|single\s+out|aim|go\s+after|market\s+to|advertis\w*\s+to|"
+        r"(?:show|serve)\w*\s+(?:the\s+|our\s+|these\s+)?ads?\s+to)\w*\b[^.]{0,60}?"
+        r"\b(?:with|who\s+(?:have|has|had|suffers?|struggles?|lives?|battles?|deals?|are\s+(?:suffering|struggling|"
+        r"living|battling|dealing|diagnosed)|were\s+diagnosed)(?:\s+(?:from|with))?|suffering\s+from|"
+        r"struggling\s+with|living\s+with|battling|diagnosed\s+with|in\s+recovery\s+from)\s+(?:\w+\s+){0,2}?"
+        + _TRAITS + r"\b",
+        r"\b(?:target|segment|single\s+out|aim|go\s+after|market\s+to|advertis\w*\s+to)\w*\b[^.]{0,40}?\b"
+        + _TRAIT_ADJECTIVES + r"\s+(?:\w+\s+)?" + _PEOPLE_WORDS + r"\b",
+    ],
+    # Tracking people for ads: a custom or lookalike audience made from a list, retargeting, tracking pixels,
+    # fingerprinting (2026-11-03 design read: all were approved). Each can be lawful with consent; a person checks.
+    "tracking": [
+        r"\b(?:custom|lookalike|look-alike|matched|similar)\s+audiences?\b|\bcustomer\s+match\b",
+        r"\bre-?(?:target|market)(?:s|ed|ing)?\b",
+        r"\b(?:upload|import|sync|send|give|hand|share|match)\w*\b[^.]{0,40}\b(?:donor|supporter|customer|member|"
+        r"subscriber|client|volunteer|contact|mailing|email)s?\s+(?:lists?|database|data|emails?|records|files?|crm|"
+        r"addresses)\b[^.]{0,40}\b(?:to|with|into|on)\s+(?:\w+\s+){0,2}?(?:facebook|meta|google|tiktok|linkedin|"
+        r"instagram|twitter|ad\s+platforms?|ads?\s+(?:manager|account|platform)s?)\b",
+        r"\b(?:tracking|meta|facebook|tiktok|linkedin|conversion|retargeting)\s+pixels?\b|\bpixel\s+(?:tracking|"
+        r"events?|code)\b",
+        r"\b(?:browser|device|canvas)\s+fingerprint\w*|\bthird[-\s]party\s+cookies?\b|"
+        r"\bcross[-\s](?:site|device|app)\s+track\w*",
     ],
 }
 
@@ -378,5 +437,6 @@ class MarketingEthicsEngine:
             "undisclosed_ad": "Disclose every paid, gifted or affiliate connection where the reader sees it: #ad at the start, or 'Sponsored by ...' in the first line.",
             "pricing_manipulation": "Show real prices and real options: a former price only if it was charged, every tier because someone should choose it, and the ask you actually mean.",
             "sensitive_inference": "Don't guess anyone's health, faith, politics, sexuality, ethnicity or finances. Work from what people chose to tell you, for the purpose they told you.",
+            "confirmshaming": "Word the decline option plainly: 'No thanks' or 'Not now'. Saying no should cost the reader nothing, not even a jab.",
         }
         return alternatives.get(category, "Consider the ethical implications and revise with prosocial intent.")

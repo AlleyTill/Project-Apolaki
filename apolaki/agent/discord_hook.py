@@ -31,6 +31,7 @@ def post_for_review(
 
     Returns dict with message_id and status.
     """
+    config.check_content_type(content_type)    # long drafts go to approval-queue/<id>_<type>.md
     if not DISCORD_TOKEN:
         return {"error": "DISCORD_TOKEN not set"}
     if not ADMIN_CHANNEL_ID:
