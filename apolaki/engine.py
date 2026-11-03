@@ -28,6 +28,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from . import kintsugi_core as k
+from . import stop
 from .agent import config
 
 BELIEFS_FILE = "engine_beliefs.json"
@@ -158,6 +159,7 @@ class ApolakiEngine:
                 raise ValueError(f"{name} must be a positive integer, not {value!r}")
         if not isinstance(think, bool):
             raise TypeError(f"think must be True or False, not {think!r}")
+        stop.check("draft")         # a person's STOP file: no draft starts and nothing is learned (apolaki.stop)
         feedback, used = "", []
         if self.learn:  # off by default: see the module docstring
             self.sync_reviews()
@@ -219,7 +221,11 @@ def main(argv=None) -> int:
     if a.cmd == "sync":
         print(f"{engine.sync_reviews()} new decision(s) recorded as beliefs")
         return 0
-    out = engine.draft(a.brief, a.type, max_tokens=a.max_tokens)
+    try:
+        out = engine.draft(a.brief, a.type, max_tokens=a.max_tokens)
+    except stop.StopRequested as e:
+        print(f"stopped: {e}", file=sys.stderr)
+        return 3
     print(out.get("draft", ""))
     print(f"\n[{out.get('status')}; queue {out.get('queue_id')}; reviewer feedback used: {out['reviewer_feedback_used']}]",
           file=sys.stderr)
