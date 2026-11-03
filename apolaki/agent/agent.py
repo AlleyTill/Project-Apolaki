@@ -41,6 +41,7 @@ import requests
 
 from . import config
 from . import style_lint  # stdlib only; sections 1-3 of the AI-writing pass
+from .. import intake
 from .memory_store import ApolakiMemoryStore
 from ..security.ethics import EthicsVerdict, MarketingEthicsEngine, large_amount
 from ..security.normalize import fold_quotes, normalize
@@ -709,6 +710,20 @@ class ApolakiAgent:
         reviewer_feedback is a ready-made reference block (from apolaki.engine) of what reviewers said about recent
         drafts. It joins the retrieved memory, never the brief: the ethics check reads the brief, and a reviewer's
         note quoting a dark pattern ("too much 'act now'") must not block the next request."""
+        # Garuda before anything else (apolaki.intake): the grant hunt puts listing and funder-page text in its briefs,
+        # so a brief is screened as outside text. A hit is quarantined for a person and the model never sees it.
+        screened = intake.screen(brief, source=f"brief ({content_type})", kind="brief")
+        if not screened.ok:
+            return {
+                "draft": "",
+                "ethics": {"verdict": "blocked", "stage": "intake",
+                           "reason": (f"quarantined by the intake screen (Garuda layer 1 matched "
+                                      f"{len(screened.flags)} pattern(s)); a person reads it with python -m "
+                                      f"apolaki.intake show {screened.quarantine_id} and can release it")},
+                "intake": {"quarantine_id": screened.quarantine_id, "flags": screened.flags},
+                "style": None, "contract": [], "generation": {},
+                "queue_id": None, "status": "quarantined",
+            }
         # Ethics on the INPUT first. The astroturf and dark-pattern regexes were
         # written for instructions ("write a testimonial as if you're a customer"),
         # and instructions arrive in the brief; before 2026-09-23 the check only ever

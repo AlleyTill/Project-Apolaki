@@ -8,7 +8,8 @@ House rules can't be written here (2026-11-02 review). Every active memory of ty
 system prompt in full, as a standing rule a brief can't lift, so only a person sets them: at the interactive agent's
 /rule command, or in Python with ApolakiAgent.remember(text, memory_type="guideline"). apolaki_store_memory refuses
 those types and anything else outside STORABLE_TYPES, and checks the rest of its schema, before anything is stored.
-The store is opened when a tool first needs it, not at import.
+What it would store is screened as outside text too (apolaki.intake, Garuda layer 1): a hit is quarantined for a
+person and refused. The store is opened when a tool first needs it, not at import.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import logging
 from datetime import datetime, timezone
 
 from .memory_store import ApolakiMemoryStore
+from .. import intake
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger("apolaki-memory")
@@ -126,6 +128,12 @@ TOOLS = [
 def handle_tool(name: str, args: dict) -> str:
     if name == "apolaki_store_memory":
         checked = store_arguments(args)          # raises before anything is stored
+        # An MCP client is outside text: Garuda screens what it asks to store, before it can reach a prompt.
+        screened = intake.screen("\n".join([checked["content"], checked["source"], *checked["tags"]]),
+                                 source="mcp:apolaki_store_memory", kind="mcp memory")
+        if not screened.ok:
+            raise ValueError(f"not stored: the intake screen quarantined it for a person ({screened.quarantine_id}; "
+                             f"Garuda layer 1 matched {len(screened.flags)} pattern(s))")
         store = get_store()
         mid = store.store(**checked)
         stats = store.stats()

@@ -39,6 +39,16 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   - They run on every brief before the model is called, on every draft, and in the interactive chat on each message
     (a blocked message never reaches the model) and on each reply. A blocked reply gets one revision, checked again;
     if it is still blocked, the chat answers with a refusal and the reason, never the blocked text.
+- **Outside text is screened before anything uses it.** Layer 1 of
+  [Garuda](https://github.com/Liberation-Labs-THCoalition/Project-Garuda), our injection screen, is vendored in
+  `apolaki/security/garuda` (its notice kept beside it). Every brief is screened before its ethics check and before
+  the model is called (the grant hunt puts listing and funder-page text in its briefs), and so is every memory the MCP
+  server is asked to store; `apolaki.grants.intake` has the screens a grant job runs on listings, funder pages and the
+  calls a model extracts from them, and `apolaki.intake.screen_discord` is there for Discord input. A hit is
+  quarantined in `$APOLAKI_HOME/quarantine/` for a person and logged, and goes nowhere else;
+  `python -m apolaki.intake list|show|release` is how a person reads it and, if it is harmless, lets that exact text
+  through. Layer 1 is a list of known phrasings: a paraphrase gets past it, and research that only discusses
+  injection is held like an attack until a person releases it. Garuda's second layer, a model judge, isn't vendored.
 - **An approval queue.** Nothing is published by Apolaki. Every draft lands in the queue with its ethics verdict,
   its lint results and the sha256 of its text, and a person approves it. An approval is of that exact text: if the
   text has changed since it was queued, the approval is refused until the item is re-queued as a new item with its
@@ -96,6 +106,7 @@ python -m apolaki.engine requeue QUEUE_ID                 # an edited item becom
 python -m apolaki.stop now "WHY" --by NAME                # stop scheduled work at its next step (docs/STOPPING.md)
 python -m apolaki.grants outcome KEY declined --date D --by NAME --reason WHY --source WHERE
 python -m apolaki.grants outcomes                         # grant outcomes in counts with n
+python -m apolaki.intake list                             # outside text the screen quarantined, for a person
 python -m apolaki.agent.agent                 # the interactive agent (/rule TEXT adds a house rule)
 python -m apolaki.agent.style_pass draft.md   # the judgement pass on a finished piece
 python -m apolaki.agent.fact_checker draft.md # the fact checker
@@ -117,6 +128,7 @@ Without a brand file, Apolaki uses a plain, generic voice and names no one.
 
 ```
 brief -> BDI intention -> content-creation chip
+      -> intake screen (Garuda layer 1; a hit is quarantined for a person and never reaches the model)
       -> ethics check (both checks; a blocked brief never reaches the model)
       -> model, with the brand, the house rules, retrieved memory and recent reviewer notes
       -> style lint -> one revision if it fails

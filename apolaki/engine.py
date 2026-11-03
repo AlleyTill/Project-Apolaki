@@ -65,7 +65,7 @@ class ContentCreationChip(k.BaseSkillChip):
                  if key in request.parameters}
         result = self.agent.draft_content(request.raw_input, content_type=request.parameters.get("content_type", "social"),
                                           reviewer_feedback=context.metadata.get("reviewer_feedback", ""), **extra)
-        ok = result.get("status") != "blocked"
+        ok = result.get("status") == "queued_for_review"      # not blocked, not quarantined
         return k.SkillResponse(content=result.get("draft", ""), success=ok, data=result,
                                requires_consensus=ok, consensus_action="publish" if ok else None)
 
@@ -282,7 +282,7 @@ def main(argv=None) -> int:
               + f"; {report.get('added', 0)} belief(s) added, {report.get('held_back', 0)} held back]", file=sys.stderr)
     for failure in watch.get("failures", []):
         print(f"[Butlin watch: {failure}]", file=sys.stderr)
-    failed = out.get("status") == "blocked" or not watch.get("ok", True) or report.get("held_back")
+    failed = out.get("status") != "queued_for_review" or not watch.get("ok", True) or report.get("held_back")
     return 1 if failed else 0
 
 
