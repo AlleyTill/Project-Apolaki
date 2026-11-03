@@ -84,7 +84,8 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
 - **A STOP file.** `python -m apolaki.stop now "WHY" --by NAME` writes `$APOLAKI_HOME/STOP`: while it exists the
   engine starts no draft and learns nothing, and a scheduled job that checks it stops before its next step. It can't
   stop a step already running, or a job that never checks it; [docs/STOPPING.md](docs/STOPPING.md) has the whole
-  procedure for the nightly grant hunt, including the scheduler route that works on any version.
+  procedure for the nightly grant hunt, including the scheduler route that works on any version, and
+  [docs/GRANT_JOB_HOOKS.md](docs/GRANT_JOB_HOOKS.md) lists what a grant job must call to get the rest.
 - **An MCP server** exposes the memory store to other tools. It can't write a house rule (a brand or guideline
   memory goes into every system prompt), and it checks the rest of what it stores against its schema. A person
   adds house rules at the interactive agent's `/rule` command.
