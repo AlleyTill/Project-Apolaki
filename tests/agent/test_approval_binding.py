@@ -74,13 +74,44 @@ def test_two_items_queued_in_the_same_second_both_survive(home, monkeypatch):
     assert A.review_item(second, "rejected")["content"] == "second draft"
 
 
+def frozen_clock(monkeypatch, A):
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 2, 20, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(A, "datetime", Frozen)
+
+
+def test_items_of_different_types_queued_in_the_same_second_get_different_ids(home, monkeypatch):
+    """review_item finds an item by its id across content types, so two types can't share one."""
+    from apolaki.agent import agent as A
+    frozen_clock(monkeypatch, A)
+    social = A.queue_for_approval("a post", "social")
+    blog = A.queue_for_approval("a blog post", "blog")
+    assert social != blog
+    assert A.review_item(social, "approved")["content"] == "a post"
+    assert A.review_item(blog, "approved")["content"] == "a blog post"
+
+
+def test_a_file_written_between_the_id_check_and_the_write_is_not_replaced(home, monkeypatch):
+    """Another process can queue in that window; the write is exclusive, so it moves on to the next id."""
+    from apolaki.agent import agent as A
+    frozen_clock(monkeypatch, A)
+    first = A.queue_for_approval("first draft", "social")
+    monkeypatch.setattr(A, "_queue_paths", lambda item_id: [])       # the check sees nothing, as in the race
+    second = A.queue_for_approval("second draft", "social")
+    assert first != second
+    contents = sorted(json.loads(p.read_text())["content"] for p in (home / "approval-queue").glob("*.json"))
+    assert contents == ["first draft", "second draft"]
+
+
 # ---- review_item checks the hash before it records an approval -----------------------------------------------------
 def test_an_unedited_item_is_approved_and_the_approval_names_the_hash(home):
     from apolaki.agent.agent import queue_for_approval, review_item
     item_id = queue_for_approval(CLEAN, "social")
     item = review_item(item_id, "approved", "good", "the comms lead")
-    assert item["status"] == "approved" and item["approved_content_sha256"] == sha(CLEAN)
-    assert on_disk(home, item_id)["approved_content_sha256"] == sha(CLEAN)
+    assert item["status"] == "approved" and item.get("approved_content_sha256") == sha(CLEAN)
+    assert on_disk(home, item_id).get("approved_content_sha256") == sha(CLEAN)
 
 
 def test_an_item_edited_on_disk_after_queueing_is_not_approved(home):
@@ -107,7 +138,11 @@ def test_a_rejection_of_an_edited_item_is_still_recorded(home, decision):
     from apolaki.agent.agent import queue_for_approval, review_item
     item_id = queue_for_approval(CLEAN, "social")
     edit_on_disk(home, item_id, content="edited")
-    assert review_item(item_id, decision, "no")["status"] == decision
+    try:
+        item = review_item(item_id, decision, "no")
+    except ValueError as e:
+        pytest.fail(f"a {decision} of changed text was refused: {e}")
+    assert item["status"] == decision
 
 
 def test_an_item_with_no_recorded_hash_is_not_approved(home):
@@ -120,7 +155,10 @@ def test_an_item_with_no_recorded_hash_is_not_approved(home):
          "ethics_verdict": "approved", "ethics_reason": "No ethics concerns"}))
     with pytest.raises(ValueError, match="no content_sha256"):
         review_item("20261016_130000", "approved")
-    assert review_item("20261016_130000", "rejected")["status"] == "rejected"
+    try:
+        assert review_item("20261016_130000", "rejected")["status"] == "rejected"
+    except ValueError as e:
+        pytest.fail(f"a rejection of an item with no hash was refused: {e}")
 
 
 def test_content_that_is_not_text_is_not_approved(home):
@@ -145,11 +183,11 @@ def test_an_override_is_recorded_with_its_note_who_and_the_block_it_overrode(hom
     from apolaki.agent.agent import queue_for_approval, review_item
     item_id = queue_for_approval(BLOCKED, "social")
     item = review_item(item_id, "approved", "ok", "the comms lead", override="the deadline is real: the venue closes")
-    o = item["ethics_override"]
-    assert item["status"] == "approved"
+    o = item.get("ethics_override")
+    assert item["status"] == "approved" and isinstance(o, dict), item
     assert o["note"] == "the deadline is real: the venue closes" and o["by"] == "the comms lead"
     assert o["verdict"] == "blocked" and "false_urgency" in o["reason"] and o["at"]
-    assert on_disk(home, item_id)["ethics_override"] == o
+    assert on_disk(home, item_id).get("ethics_override") == o
 
 
 def test_an_override_must_name_who_made_it(home):
@@ -200,10 +238,10 @@ def test_requeue_makes_a_new_item_from_the_edited_text_and_supersedes_the_old(ho
     new_id = requeue_item(item_id)
     new, old = on_disk(home, new_id), on_disk(home, item_id)
     assert new_id != item_id and new["content"] == edited and new["content_sha256"] == sha(edited)
-    assert new["status"] == "pending" and new["requeued_from"] == item_id and new["context"] == "the brief"
-    assert new["content_type"] == "social" and "pass" in new["style"]
-    assert old["status"] == "superseded" and old["superseded_by"] == new_id and old["status_before"] == "pending"
-    assert review_item(new_id, "approved", "", "the comms lead")["approved_content_sha256"] == sha(edited)
+    assert new["status"] == "pending" and new.get("requeued_from") == item_id and new["context"] == "the brief"
+    assert new["content_type"] == "social" and "pass" in new.get("style", {})
+    assert old["status"] == "superseded" and old.get("superseded_by") == new_id and old.get("status_before") == "pending"
+    assert review_item(new_id, "approved", "", "the comms lead").get("approved_content_sha256") == sha(edited)
 
 
 def test_requeue_runs_the_ethics_check_on_the_edited_text(home):
