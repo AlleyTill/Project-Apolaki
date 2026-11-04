@@ -42,18 +42,19 @@ it, then checks every text column of every table, the database files byte by byt
 runs a second dry run. A check that still finds the name, or a compaction or log truncation that failed, is an error
 (`ERASE INCOMPLETE`, recorded as not verified), never a success.
 
-What counts as the name: case, accents, look-alike letters and invisible characters don't matter; the parts of a name
-may be joined by spaces, hyphens or dashes, apostrophes, full stops, underscores, markup characters (`*`, `[`, `]`,
-`(`, `)`, `/` and the like) or nothing ("Jean-Luc Moreau" also finds "Jean Luc Moreau", "JeanLuc Moreau" and
+What counts as the name: case, accents, the common look-alike letters (Cyrillic, Greek and Armenian ones that look
+Latin; not small capitals or Cherokee letters, docs/KNOWN_LIMITS.md) and invisible characters don't matter; the parts
+of a name may be joined by spaces, hyphens or dashes, apostrophes, full stops, underscores, markup characters (`*`,
+`[`, `]`, `(`, `)`, `/` and the like) or nothing ("Jean-Luc Moreau" also finds "Jean Luc Moreau", "JeanLuc Moreau" and
 "jean_luc_moreau"; "Marisol Quintero" finds "**Marisol** Quintero" and "Marisol/Quintero"); escaped text is read
 decoded (the store writes tags as JSON, so "L\u00f3pez" on disk is "López"), and markup is read taken out (a Markdown
 link "[Marisol](url) Quintero", HTML tags and entities, percent-encoding). A blob (binary data in a column) is read as
 text too, in Latin-1, UTF-16 and UTF-32, either byte order, with a byte-order mark or without, unless it is one of the
 vector indexes' own chunks, which the erase drops and refills. A digit after the name is still the name
-("marisol.quintero85@...", "@MarisolQuintero1990"). In scripts written without spaces (Chinese, Japanese, Thai and
-the like) and in Korean there is no word edge to keep, so a mention inside a sentence is found, and a character of
-those scripts next to a name in another script is a separator ("Quintero" with a Japanese honorific attached). An
-Arabic name with an attached prefix ("with", "and", "the") is found.
+("marisol.quintero85@...", "@MarisolQuintero1990"). In scripts written without spaces (Chinese, Japanese, Thai and the
+like) and in Korean there is no word edge to keep, so a mention inside a sentence is found, and a character of those
+scripts next to a name in another script is a separator ("Quintero" with a Japanese honorific attached). An Arabic
+name with an attached prefix ("with", "and", "the") is found.
 
 A near-match is the name inside a longer word ("Marisol Quinterova"). It may be someone else, or the person. The dry
 run lists every near-match in what the erase keeps, with where it is and the text around it, and the erase refuses

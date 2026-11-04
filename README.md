@@ -37,13 +37,15 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   - A count of what is left ("Only three spots left!") passes only when the brief states the same count, and then goes
     to a person; a brief, or a person's chat message, is a fact for its own check, so the count it states is the
     person's to claim, and only a count it contradicts ("Say only 10 left; we have hundreds") is blocked; time left
-    ("Only 2 days left to apply") goes to a person and is never blocked; a "last chance" or "limited time" in a sentence that names a real date or time ("through March 15",
-    "Friday at 5pm") goes to a person instead of being blocked; an instruction to say something it calls untrue ("even
-    though it doesn't") is blocked; moderating spam ("Delete the spam comments") is not sending it.
+    ("Only 2 days left to apply") goes to a person and is never blocked; a "last chance" or "limited time" in a sentence
+    that names a real date or time ("through March 15", "Friday at 5pm") goes to a person instead of being blocked; an
+    instruction to say something it calls untrue ("even though it doesn't") is blocked; moderating spam ("Delete the
+    spam comments") is not sending it.
   - They are patterns, and patterns have limits: they see only the negations they were written for ("no fake
     testimonials" and "We never spam you" pass), and they can't catch a paraphrase they weren't written for. The known
-    misses are kept as expected failures in `tests/test_red_team_probes.py`. The person who approves the draft is the
-    check that holds.
+    misses are kept as expected failures in `tests/test_red_team_probes.py`, and listed in plain language, with what to
+    watch for, in [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md). The person who approves the draft is the check that
+    holds.
   - Both read normalised text: curly quotes are straightened, invisible characters removed and look-alike letters
     (fullwidth, Cyrillic, accented) folded first, so "Don’t miss out" typed on a phone is read as "Don't miss out".
   - They run on every brief before the model is called, on every draft, and in the interactive chat on each message
