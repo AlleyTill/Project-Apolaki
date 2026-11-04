@@ -298,8 +298,12 @@ def test_a_reply_may_repeat_a_count_of_what_is_left_the_person_stated(monkeypatc
     """A reply is checked with what the person said as its facts: their own count of what is left may come back, a
     count they never gave is refused."""
     from apolaki.agent import agent as A
-    scripted_chat(monkeypatch, A, ["Only three spots left! Book today.", "Only five spots left!", "Only five spots left!"])
+    calls = scripted_chat(monkeypatch, A, ["Only three spots left! Book today.", CLEAN_REPLY, "Only five spots left!",
+                                           "Only five spots left!"])
     agent = make_agent(A)
     assert agent.respond("Saturday's workshop has three spots left. Write a tweet.") == \
         "Only three spots left! Book today."
-    assert agent.respond("Another tweet, please.").startswith("[Refused")
+    # the vouched reply now stands in the window: the next message is read with it, and passes
+    assert agent.respond("Thanks. When does the clinic open?") == CLEAN_REPLY
+    out = agent.respond("Another tweet, please.")
+    assert out.startswith("[Refused: the reply was blocked") and len(calls) == 4

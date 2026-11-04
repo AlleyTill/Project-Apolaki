@@ -110,9 +110,9 @@ DARK_PATTERNS = {
         r"(hurry)",
         # A lapse notice ("Last chance to keep your monthly gift active") is flagged by the library engine, not
         # blocked here (2026-11-02 review, R5); so is a last chance or a limited time in a sentence that names a
-        # concrete date (round 3, DATED_OK). A count of what is left ("only 3 left") is checked against the brief
-        # (apolaki.security.ethics.scarcity).
-        r"(last\s+chance(?!\s+to\s+(?:keep|renew|update|reactivate|restore)\s+your\b)|limited\s+time)",
+        # concrete date (round 3: the group named "dated", as in the library). A count of what is left ("only 3 left")
+        # is checked against the brief (apolaki.security.ethics.scarcity).
+        r"(?P<dated>last\s+chance(?!\s+to\s+(?:keep|renew|update|reactivate|restore)\s+your\b)|limited\s+time)",
     ],
     "guilt_manipulation": [
         r"(if\s+you\s+don't\s+(donate|help|act).*\b(suffer|die|starve))",
@@ -128,7 +128,6 @@ COMPILED_DARK = {
     cat: [re.compile(p, re.IGNORECASE) for p in patterns]
     for cat, patterns in DARK_PATTERNS.items()
 }
-DATED_OK = {("false_urgency", 2)}
 
 # Instruction-shaped phrases only. The pre-audit pattern included bare "publish",
 # which matched "published" in nearly every research announcement ("We just
@@ -166,8 +165,8 @@ def _own_ethics_check(content: str, facts: str = "") -> tuple[str, str]:
     texts = pattern_texts(content)
     content = texts[0]
     for category, patterns in COMPILED_DARK.items():
-        for i, pattern in enumerate(patterns):
-            if any(not ((category, i) in DATED_OK and dated(t, m)) for t in texts for m in pattern.finditer(t)):
+        for pattern in patterns:
+            if any(not ("dated" in pattern.groupindex and dated(t, m)) for t in texts for m in pattern.finditer(t)):
                 return "blocked", f"Dark pattern detected: {category}"
     if scarcity(texts, facts) == "blocked":
         return "blocked", "Dark pattern detected: false_urgency (a count of what is left that the brief doesn't state)"
@@ -709,8 +708,8 @@ class ApolakiAgent:
         if verdict == "blocked":
             return f"[Refused: the request was blocked by the ethics check ({reason}). Nothing was sent to the model.]"
         window, n_earlier = self.recent_requests(user_message)
-        if n_earlier:
-            verdict, reason = ethics_check(window)
+        if n_earlier:       # with what the person said as facts: a reply repeating their own count isn't held against them
+            verdict, reason = ethics_check(window, facts=self.person_said(user_message))
             if verdict == "blocked":
                 return (f"[Refused: the request, read with your last {n_earlier} message(s) as the model would read it, "
                         f"was blocked by the ethics check ({reason}). Nothing was sent to the model.]")

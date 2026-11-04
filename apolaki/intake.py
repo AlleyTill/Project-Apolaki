@@ -115,8 +115,9 @@ def scan(text: str) -> list[str]:
     if not text:
         return []
     # The raw scan is kept so the screen never rests on normalize() alone. No text is known that it catches and the
-    # normalised scan misses, so a mutant that drops it lives; that is why. The text as it came (raw and normalised)
-    # is what catches a tag-shaped injection such as "<system>", which the reader's view takes out.
+    # normalised scan misses, so a mutant that drops it lives; that is why. The reader's view is tasted as it is too,
+    # for the same reason, and a mutant that drops that lives as well (round 3). The text as it came (raw and
+    # normalised) is what catches a tag-shaped injection such as "<system>", which the reader's view takes out.
     flags = layer1(text)
     for t in (normalize(text), *(v for seen in as_read(text) for v in (seen, normalize(seen)))):
         flags += [p for p in layer1(t) if p not in flags]

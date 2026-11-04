@@ -914,13 +914,15 @@ TOUCHING = [
     ("Thanks to [Marisol](https://x.example) Quintero.", PERSON, "Quintero"),
     ("Contact: Marisol/Quintero", PERSON, "Quintero"),
     ("Mar&iacute;a L&oacute;pez called.", MARIA, "pez"),
+    # a name in a script written without spaces keeps no edge even where Latin letters touch it ("member VIP" + name)
+    ("\u4f1a\u5458VIP\u738b\u5c0f\u660e\u6765\u4e86\u3002", "\u738b\u5c0f\u660e", "\u738b\u5c0f\u660e"),
 ]
 
 
 @pytest.mark.parametrize("text,name,probe", TOUCHING, ids=["chinese", "thai", "arabic prefix", "japanese honorific",
                                                             "email with digits", "handle with year", "file with digit",
                                                             "markdown emphasis", "markdown link", "slash",
-                                                            "html entities"])
+                                                            "html entities", "chinese beside latin letters"])
 def test_a_name_touching_a_letter_a_digit_or_markup_is_found_and_erased(home, text, name, probe):
     from apolaki.agent import erase as X
     s = open_store(home)
@@ -1035,7 +1037,7 @@ def test_a_near_match_in_a_kept_file_needs_a_ruling_too(home, where, setup):
     setup(home)
     p = X.plan(PERSON)
     assert [n["word"] for n in p.near] == ["marisol quinterova"], X.describe(p)
-    with pytest.raises(X.EraseError, match="near-match"):
+    with pytest.raises(X.EraseError, match="near-match.*Nothing was removed"):     # refused, not run and incomplete
         X.erase(PERSON, confirm=p.code, by="x", reason="asked")
     try:
         X.erase(PERSON, confirm=p.code, by="x", reason="asked", not_them=("marisol quinterova",))
@@ -1093,8 +1095,9 @@ def test_a_kept_blob_of_text_that_isnt_utf8_is_read_as_text(home):
     plant(home)
     con = raw_db(home)
     con.execute("CREATE TABLE campaign_notes (id TEXT PRIMARY KEY, body BLOB)")
-    con.execute("INSERT INTO campaign_notes VALUES ('n1', ?)",
-                ("Caf\u00e9 meeting with Marisol Quintero, cr\u00e8me br\u00fbl\u00e9e.".encode("latin-1"),))
+    blob = "Caf\u00e9 meeting with Marisol Quintero, cr\u00e8me br\u00fbl\u00e9e, 10:30.".encode("latin-1")
+    assert len(blob) % 4 == 0 and len(blob) >= 16, "the setup lost its point: the float check must be what decides"
+    con.execute("INSERT INTO campaign_notes VALUES ('n1', ?)", (blob,))
     con.commit()
     con.close()
     p = X.plan(PERSON)

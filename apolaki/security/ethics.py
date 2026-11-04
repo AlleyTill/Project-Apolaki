@@ -71,9 +71,9 @@ _PEOPLE_WORDS = (r"(?:people|persons|users|customers|donors|members|visitors|pro
 # Words that, just before "the fake reviews", say they are being caught, moderated or answered, not written:
 # "Report the fake reviews to Yelp", "How do I respond to fake reviews?" (round 3).
 _HANDLING = ("spot", "detect", "flag", "report", "remove", "delete", "identify", "combat", "fight", "handle",
-             "handling", "tackle", "tackling", "address", "addressing", "catch", "catching", "stop", "stopping", "prevent",
-             "preventing", "moderate", "moderating", "avoid", "respond to", "responding to", "reply to", "replying to",
-             "deal with", "dealing with")
+             "handling", "tackle", "tackling", "address", "addressing", "catch", "catching", "stop", "stopping",
+             "prevent", "preventing", "moderate", "moderating", "avoid", "respond to", "responding to", "reply to",
+             "replying to", "deal with", "dealing with")
 _NOT_WRITING = "".join(rf"(?<!\b{v.replace(' ', chr(92) + 's')}\s{d})" for v in _HANDLING
                        for d in ("", r"the\s", r"all\s", r"any\s", r"these\s", r"those\s", r"our\s"))
 # "Invite customers to write reviews" is asking them, not writing reviews (round 3).
@@ -93,14 +93,15 @@ _REVIEW_KINDS = (r"(?:book|film|movie|album|show|play|concert|exhibit\w*|game|pa
 
 _DARK_PATTERNS = {
     "false_urgency": [
-        # "Last chance to keep your monthly gift active", sent because a card really expired, is a lapse notice: it is
-        # flagged for a person (urgency_claim), not blocked (2026-11-02 review, R5).
         r"(act\s+now|(?:don't|dont|do\s+not)\s+miss\s+out|expires?\s+soon)",
         r"(hurry|before\s+it's\s+too\s+late|now\s+or\s+never)",
         # "Last chance", "limited time": blocked, unless the sentence names a concrete date or time ("Last-chance
-        # reminder: the grant deadline is Friday at 5pm"), when a person checks it (urgency_claim, round 3). A count
-        # of what is left ("Only three spots left!") is checked against the brief: scarcity() below.
-        r"((?:last|final)" + _HY + r"chance(?!\s+to\s+(?:keep|renew|update|reactivate|restore)\s+your\b)|"
+        # reminder: the grant deadline is Friday at 5pm"), when a person checks it (urgency_claim, round 3). "Last
+        # chance to keep your monthly gift active", sent because a card really expired, is a lapse notice: it is
+        # flagged for a person (urgency_claim), not blocked (2026-11-02 review, R5). The group named "dated" is what
+        # marks a pattern a concrete date can excuse (_DATED). A count of what is left ("Only three spots left!") is
+        # checked against the brief: scarcity() below.
+        r"(?P<dated>(?:last|final)" + _HY + r"chance(?!\s+to\s+(?:keep|renew|update|reactivate|restore)\s+your\b)|"
         r"limited" + _HY + r"time|time\s+is\s+running\s+out|final\s+hours|"
         r"(?:deal|offer|sale|price|discount)s?\s+(?:won't|will\s+not)\s+last)",
         # A bare "countdown" blocked "Our countdown to the conference starts today" (R5); a fake or resetting one is
@@ -222,8 +223,10 @@ _DARK_PATTERNS = {
         r"[^.]{0,40}?\b(?:quotes?|testimonials?|reviews?|endorsements?|statements?|comments?)\b[^.]{0,20}?"
         r"\b(?:that\s+)?(?:we|you|i|they)\s+(?:can|could|will|would|might|may)\s+(?:attribut|credit|ascrib|assign|"
         r"pin)\w*\b",
-        # Signed with an invented name: "Write a testimonial and sign it with a made-up customer name".
-        r"\b(?:testimonials?|reviews?|quotes?|endorsements?)\b[^.]{0,60}?\b(?:sign|attribut|credit|byline)\w*\b"
+        # Signed with an invented name: "Write a testimonial and sign it with a made-up customer name", "Sign the
+        # testimonial with a made-up customer name".
+        r"\b(?:(?:testimonials?|reviews?|quotes?|endorsements?)\b[^.]{0,60}?\b(?:sign|attribut|credit|byline)\w*|"
+        r"(?:sign|attribut|credit|byline)\w*\b[^.]{0,40}?\b(?:testimonials?|reviews?|quotes?|endorsements?))\b"
         r"[^.]{0,30}?\b(?:made[-\s]up|fake|invented|fictional|fictitious|random|false|phony|bogus|stock)\s+"
         r"(?:\w+\s+){0,2}?(?:names?|signatures?|bylines?|persons?|people)\b",
         # "Write reviews from the perspective of happy customers".
@@ -575,9 +578,9 @@ def scarcity(texts: list[str], facts: str = "") -> str:
 # Ethics Engine
 # ---------------------------------------------------------------------------
 
-# Dark patterns a concrete date or time in the same sentence turns into a flag for a person (urgency_claim): "Last
-# chance" and "limited time" with a real deadline ("through March 15", "Friday at 5pm"), round 3.
-_DATED_OK = {("false_urgency", 2)}
+# A dark pattern that a concrete date or time in the same sentence turns into a flag for a person (urgency_claim) has a
+# group named "dated": "Last chance" and "limited time" with a real deadline ("through March 15", "Friday at 5pm").
+_DATED = "dated"
 
 
 class MarketingEthicsEngine:
@@ -616,10 +619,10 @@ class MarketingEthicsEngine:
 
         # Check dark patterns first (hard deny)
         for category, patterns in _COMPILED_DARK_PATTERNS.items():
-            for i, pattern in enumerate(patterns):
+            for pattern in patterns:
                 for text in texts:
                     for m in pattern.finditer(text):
-                        if (category, i) in _DATED_OK and dated(text, m):
+                        if _DATED in pattern.groupindex and dated(text, m):
                             claim = "a dated deadline"
                             continue
                         return blocked(category)
