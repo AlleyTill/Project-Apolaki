@@ -16,7 +16,7 @@ The steps, in order:
      included) become ', and “ ” „ ‟ ″ « » and their kin become ".
   4. Compatibility decomposition (NFKD), then combining marks are dropped: fullwidth and mathematical letters,
      ligatures, and accented letters become plain ones ("ｆａｋｅ", "𝐟𝐚𝐤𝐞", "ﬁ", "fàke").
-  5. Cyrillic and Greek letters that look like Latin ones become the Latin letter.
+  5. Cyrillic, Greek and Armenian letters that look like Latin ones become the Latin letter.
   6. Composition (NFC), and step 3 again, since step 4 can produce quote look-alikes (‴ decomposes to three ′).
 
 normalize(normalize(t)) == normalize(t).
@@ -25,11 +25,12 @@ Who reads through it: both ethics checks (the library engine and the agent's own
 output-contract check, the unsourced-quotation check, the auto-capture trigger, the fast classifier and the router. The
 style linter does not, on purpose: curly quotes are among the things it counts.
 
-What it can't do: it doesn't undo bidirectional reordering (text stored backwards and displayed forwards), spacing
-("f a k e"), misspellings or paraphrase, and the look-alike table in step 5 covers the common Cyrillic and Greek
-letters, not Unicode's whole confusables list. Folding accents and look-alikes also means a pattern can match
-non-English text that only resembles an English trigger. Every pattern is English, so that is rare, and its cost is a
-flag a person reads or a refused brief a person can rephrase.
+What it can't do: it doesn't undo bidirectional reordering (text stored backwards and displayed forwards), spacing ("f a
+k e"), misspellings or paraphrase, and the look-alike table in step 5 covers the common Cyrillic and Greek letters (and
+a few Armenian ones), not Unicode's whole confusables list. Folding accents and look-alikes also means a pattern can
+match non-English text that only resembles an English trigger. Every pattern is English, so that is rare, and its cost
+is a flag a person reads or a refused brief a person can rephrase. (The ethics checks read spelled-out letters joined
+as well, and underscores as spaces: apolaki.security.ethics.pattern_texts.)
 """
 from __future__ import annotations
 
@@ -62,6 +63,8 @@ _LOOKALIKE_PAIRS = [
     ("\u0391\u0392\u0395\u0396\u0397\u0399\u039a\u039c\u039d\u039f\u03a1\u03a4\u03a5\u03a7", "ABEZHIKMNOPTYX"),
     # Latin letters that stand in for others: dotless i, dotless j, script g, alpha, small capital L
     ("\u0131\u0237\u0261\u0251\u029f", "ijgaL"),
+    # Armenian: oh, seh, vo, ho, za, co; capital oh and seh (round 3: "b\u0585gus" got past)
+    ("\u0585\u057d\u0578\u0570\u0566\u0581\u0555\u054d", "ounhqgOU"),
 ]
 _LOOKALIKES = str.maketrans("".join(a for a, _ in _LOOKALIKE_PAIRS), "".join(b for _, b in _LOOKALIKE_PAIRS))
 

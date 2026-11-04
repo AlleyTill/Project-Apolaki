@@ -44,7 +44,8 @@ class EthicsCheck:
 
 # People the patterns below mean when they ask who a review, a voice or an inference is about.
 _PERSONA = (r"(?:customer|client|user|donor|supporter|member|patient|buyer|guest|parent|student|volunteer|fan|reader|"
-            r"attendee)")
+            r"attendee|mom|mum|dad|mother|father|grandparent|resident|neighbou?r|tenant|shopper|diner|travell?er|"
+            r"subscriber|participant|homeowner)")
 _PERSONS = _PERSONA[:-1] + r")s?"
 # Between the halves of "limited-time", "last-chance", "crossed-out": spaces, an ASCII hyphen or a Unicode one.
 _HY = r"[\s\-\u2010-\u2015]+"
@@ -67,13 +68,41 @@ _PEOPLE_WORDS = (r"(?:people|persons|users|customers|donors|members|visitors|pro
                  r"teenagers|youth|kids|children|parents|mothers|fathers|moms|dads|patients|folks|individuals|adults|"
                  r"seniors|students|voters|families|households|immigrants|veterans|employees|workers)")
 
+# Words that, just before "the fake reviews", say they are being caught, moderated or answered, not written:
+# "Report the fake reviews to Yelp", "How do I respond to fake reviews?" (round 3).
+_HANDLING = ("spot", "detect", "flag", "report", "remove", "delete", "identify", "combat", "fight", "handle",
+             "handling", "tackle", "tackling", "address", "addressing", "catch", "catching", "stop", "stopping", "prevent",
+             "preventing", "moderate", "moderating", "avoid", "respond to", "responding to", "reply to", "replying to",
+             "deal with", "dealing with")
+_NOT_WRITING = "".join(rf"(?<!\b{v.replace(' ', chr(92) + 's')}\s{d})" for v in _HANDLING
+                       for d in ("", r"the\s", r"all\s", r"any\s", r"these\s", r"those\s", r"our\s"))
+# "Invite customers to write reviews" is asking them, not writing reviews (round 3).
+_OTHERS_TO = "".join(rf"(?<!\b{w}\sto\s)" for b in (
+    "customer", "client", "user", "donor", "supporter", "member", "patient", "buyer", "guest", "parent", "student",
+    "volunteer", "fan", "reader", "attendee", "subscriber", "participant", "visitor", "shopper", "diner", "resident",
+    "tenant", "neighbor", "neighbour") for w in (b, b + "s")) + "".join(
+    rf"(?<!\b{w}\sto\s)" for w in ("them", "people", "everyone", "everybody", "folks", "others", "anyone", "him",
+                                     "her"))
+
+# Other kinds of review, which a person may ask Apolaki to write: a book or film review, a performance or peer review.
+_REVIEW_KINDS = (r"(?:book|film|movie|album|show|play|concert|exhibit\w*|game|paper|literature|code|peer|performance|"
+                 r"annual|year[-\s]end|quarterly|monthly|weekly|mid[-\s]year|program(?:me)?|policy|grant|budget|safety|"
+                 r"security|risk|design|case|systematic|internal|external|independent|board|staff|employee|team|"
+                 r"project|incident|legal|compliance|technical|editorial|press|media|critical|scholarly|academic|draft|"
+                 r"document|contract|site|website|usability|accessibility|data|process)")
+
 _DARK_PATTERNS = {
     "false_urgency": [
         # "Last chance to keep your monthly gift active", sent because a card really expired, is a lapse notice: it is
         # flagged for a person (urgency_claim), not blocked (2026-11-02 review, R5).
-        r"(last" + _HY + r"chance(?!\s+to\s+(?:keep|renew|update|reactivate|restore)\s+your\b)|act\s+now|"
-        r"(?:don't|dont|do\s+not)\s+miss\s+out|expires?\s+soon)",
-        r"(only\s+\d+\s+left|limited" + _HY + r"time|hurry|before\s+it's\s+too\s+late)",
+        r"(act\s+now|(?:don't|dont|do\s+not)\s+miss\s+out|expires?\s+soon)",
+        r"(hurry|before\s+it's\s+too\s+late|now\s+or\s+never)",
+        # "Last chance", "limited time": blocked, unless the sentence names a concrete date or time ("Last-chance
+        # reminder: the grant deadline is Friday at 5pm"), when a person checks it (urgency_claim, round 3). A count
+        # of what is left ("Only three spots left!") is checked against the brief: scarcity() below.
+        r"((?:last|final)" + _HY + r"chance(?!\s+to\s+(?:keep|renew|update|reactivate|restore)\s+your\b)|"
+        r"limited" + _HY + r"time|time\s+is\s+running\s+out|final\s+hours|"
+        r"(?:deal|offer|sale|price|discount)s?\s+(?:won't|will\s+not)\s+last)",
         # A bare "countdown" blocked "Our countdown to the conference starts today" (R5); a fake or resetting one is
         # still blocked.
         r"(offer\s+ends|ticking\s+clock|midnight\s+tonight)",
@@ -108,7 +137,12 @@ _DARK_PATTERNS = {
         r"(?<!\bno\s)(?<!\bnot\s)(?<!n't\s)(?<!\bnever\s)(?<!\bspot\s)(?<!\bdetect\s)(?<!\bflag\s)(?<!\breport\s)"
         r"(?<!\bremove\s)(?<!\bagainst\s)(?<!\babout\s)(?<!\bavoid\s)(?<!\bforbid\s)(?<!\bforbids\s)"
         r"(?<!\bban\s)(?<!\bbans\s)(?<!\bbanning\s)(?<!\bidentify\s)(?<!\bcombat\s)(?<!\bfight\s)"
-        r"\b(?:fake|fabricated|made" + _HY + r"up|invented|bogus|phony|phoney|sham|counterfeit|fictitious|fictional|"
+        # discussing them (round 3): "the FTC rule on fake reviews", "banned fake reviews", "why fake reviews hurt"
+        r"(?<!\bon\s)(?<!\bbanned\s)(?<!\bwhy\s)(?<!\boutlawed\s)(?<!\bprohibits\s)(?<!\bprohibited\s)"
+        r"(?<!\bregulate\s)(?<!\bregulating\s)(?<!\bpolicing\s)(?<!\bdangers\sof\s)(?<!\bproblem\sof\s)"
+        r"(?<!\bproblem\swith\s)(?<!\brise\sof\s)(?<!\bspread\sof\s)(?<!\bimpact\sof\s)(?<!\bcost\sof\s)"
+        + _NOT_WRITING
+        + r"\b(?:fake|fabricated|made" + _HY + r"up|invented|bogus|phony|phoney|sham|counterfeit|fictitious|fictional|"
         r"imaginary|manufactured)\s+(?:\w+[\s-]+){0,2}?(?:reviews?|testimonials?|endorsements?|ratings?|quotes?)\b",
         # Verbs that only ever mean inventing, as instructions: "Invent three testimonials", "Make up a quote from a
         # customer". Their -ed and -ing forms, and "fake" (an adjective as often as a verb: "Fake three reviews" is
@@ -125,7 +159,7 @@ _DARK_PATTERNS = {
         r"come\s+up\s+with)\s+"
         r"(?:(?!ask|request|invit|collect|gather|solicit|encourag|repl|respon|summar|analy|about\b|to\b|of\b|"
         r"for\b|on\b|that\b|with\b|from\b|using\b|featur|show|highlight|quot|includ|contain)\w+[\s-]+){0,4}?"
-        + _PERSONA + r"[\s-]+(?:reviews?|testimonials?|endorsements?|ratings?)\b"
+        + _PERSONA + r"[\s-]+(?:reviews?|testimonials?|endorsements?|ratings?|quotes?)\b"
         r"(?![\s-]+(?:polic|guideline|section|page|widget|template|request|email|form|survey|program|process|"
         r"strateg|summar|analys|report|dashboard|feed|carousel|module|block|plugin|integration|api\b|data\b|"
         r"platform|tool|software|system|management|moderation|respon|repl|heading|title|intro|link|button|score|"
@@ -139,9 +173,13 @@ _DARK_PATTERNS = {
         r"(pretend\s+to\s+be\s+a\s+(customer|user|supporter|donor))",
         # Posing as one to write a review ("Pose as a happy client and write a review"); posing as a customer to
         # test the checkout is not this.
-        r"\b(?:pretend(?:s|ed|ing)?\s+to\s+be|pos(?:e|es|ed|ing)\s+as|masquerad(?:e|es|ed|ing)\s+as)\s+"
-        r"(?:a|an|one\s+of\s+(?:our|the|my|their)|our|the)?\s*(?:\w+\s+){0,2}?" + _PERSONS + r"\b[^.]{0,40}"
-        r"\b(?:reviews?|testimonials?|endorse\w*|ratings?|rate\b|posts?|comments?)",
+        r"\b(?:pretend(?:s|ed|ing)?\s+(?:that\s+)?(?:to\s+be|you(?:'re|\s+are|\s+were|\s+was))|"
+        r"pos(?:e|es|ed|ing)\s+as|masquerad(?:e|es|ed|ing)\s+as|act(?:s|ed|ing)?\s+as|"
+        r"imagine\s+(?:that\s+)?you(?:'re|\s+are|\s+were)|role[-\s]?play(?:s|ed|ing)?\s+as|"
+        r"play(?:s|ed|ing)?\s+the\s+(?:role|part)\s+of|you(?:'re|\s+are)\s+now)\s+"
+        r"(?:a|an|one\s+of\s+(?:our|the|my|their)|our|the)?\s*(?:\w+\s+){0,2}?" + _PERSONS + r"(?![-\w])"
+        r"(?!\s+(?:service|support|success|care|experience|journey|agent|rep|representative|team|relations)s?\b)"
+        r"[^.]{0,40}\b(?:reviews?|testimonials?|endorse\w*|ratings?|rate\b|posts?|comments?)",
         # "as if you were a customer", "as though it came from a donor"; not "as if you were talking to a customer"
         # or "as though you were a customer support agent".
         r"\bas\s+(?:if|though)\s+(?:you(?:'re|\s+(?:are|were|was))|it\s+(?:was|were|is|came)\s+(?:written\s+)?"
@@ -150,14 +188,73 @@ _DARK_PATTERNS = {
         r"journey|agent|rep|representative|team|relations|base|data|list|segment|persona|interview)s?\b)",
         # Plainly asked-for invented reviews (R4): "Write five glowing reviews from happy clients". A reply to, a
         # summary of, or a request for real reviews is not one.
-        r"\b(?:write|draft|generate|create|compose|invent|fabricate|make\s+up)\s+"
+        r"\b(?:write|draft|generate|create|compose|invent|fabricate|make\s+up|come\s+up\s+with)\s+"
         r"(?:(?!ask|request|invit|collect|gather|solicit|encourag|repl|respon|summar|about\b|to\b|of\b|for\b|on\b|"
-        r"that\b)\w+[\s-]+){0,4}?(?:reviews?|testimonials?|endorsements?)\s+(?:from|by)\s+(?:[\w']+,?\s+){0,3}?"
-        + _PERSONS + r"\b",
+        r"that\b)\w+[\s-]+){0,4}?(?:reviews?|testimonials?|endorsements?|quotes?)\s+(?:from|by)\s+"
+        r"(?:[\w']+,?\s+){0,3}?" + _PERSONS + r"\b(?!\s+(?:survey|letter|email|interview|feedback|form|comment|data|"
+        r"list|response|note|story|stories)s?\b)",
         r"\bin\s+the\s+voice\s+of\s+(?:a|an|one\s+of\s+our)\s+(?:\w+\s+){0,2}?" + _PERSONS + r"\b",
         r"\bfrom\s+(?:a|an|one)\s+(?:\w+\s+){0,2}?" + _PERSONA + r"'s\s+(?:point\s+of\s+view|perspective|pov)\b",
-        r"\b(?:reviews?|testimonials?|endorsements?)\s+(?:\w+\s+){0,3}?as\s+(?:a|an)\s+(?:\w+\s+){0,2}?"
-        + _PERSONA + r"\b",
+        r"\b(?:reviews?|testimonials?|endorsements?)\s+(?:\w+\s+){0,3}?as\s+(?:a|an|one\s+of\s+(?:our|the|my|their))"
+        r"\s+(?:\w+\s+){0,2}?" + _PERSONS + r"\b",
+        # Round 3 (2026-11-03 verifier, round 2). Writing reviews at all: real ones are written by the people who give
+        # them. "Write five Google reviews for our bakery", "Draft 10 five-star reviews for our Amazon listing", "Write
+        # five glowing reviews". Not a reply to, summary of, request for, policy or page for reviews; not another kind
+        # of review (a book, performance or peer review); not a review of something other than us ("of the
+        # conference"); not asking others to write them ("invite customers to write reviews").
+        _OTHERS_TO + r"\b(?:write|writes|writing|wrote|draft(?:s|ed|ing)?|generat(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|"
+        r"compos(?:e|es|ed|ing)|produc(?:e|es|ed|ing)|churn(?:s|ed|ing)?\s+out|crank(?:s|ed|ing)?\s+out|"
+        r"come\s+up\s+with|give\s+me|get\s+me|send\s+me)\s+"
+        r"(?:(?!ask|request|invit|collect|gather|solicit|encourag|repl|respon|summar|analy|about\b|to\b|of\b|"
+        r"for\b|on\b|in\b|that\b|with\b|from\b|using\b|featur|show|highlight|quot|includ|contain|polic|section|page|"
+        r"template|guid|tip|shar|celebrat|thank|promot|monitor|track|moderat|handl|manag|" + _REVIEW_KINDS + r"\b)"
+        r"[\w'-]+[\s-]+){0,4}?(?:reviews?|testimonials?|endorsements?|ratings?)\b"
+        r"(?![\s-]+(?:polic|guideline|section|page|widget|template|request|email|form|survey|program|process|"
+        r"strateg|summar|analys|report|dashboard|feed|carousel|module|block|plugin|integration|api\b|data\b|"
+        r"platform|tool|software|system|management|moderation|respon|repl|heading|title|intro|link|button|score|"
+        r"average|count|metric|site|aggregator|cycle|meeting|session|period|criteria|rubric|scale|board|committee|"
+        r"panel|deadline))"
+        r"(?!\s+(?:of|about)\s+(?!(?:our|us)\b|my\s+(?!(?:essay|draft|writing|paper|code|work|resume|cv|cover\s+"
+        r"letter|application|proposal|grant|plan|article|copy|pitch|deck|presentation|speech|story|poem|book|"
+        r"manuscript|thesis)\b)))",
+        # Words written now to be credited to a persona later: "Draft a few testimonials we can attribute to donors".
+        r"\b(?:write|writes|writing|draft\w*|creat\w*|generat\w*|compos\w*|make\s+up|invent\w*|come\s+up\s+with)\b"
+        r"[^.]{0,40}?\b(?:quotes?|testimonials?|reviews?|endorsements?|statements?|comments?)\b[^.]{0,20}?"
+        r"\b(?:that\s+)?(?:we|you|i|they)\s+(?:can|could|will|would|might|may)\s+(?:attribut|credit|ascrib|assign|"
+        r"pin)\w*\b",
+        # Signed with an invented name: "Write a testimonial and sign it with a made-up customer name".
+        r"\b(?:testimonials?|reviews?|quotes?|endorsements?)\b[^.]{0,60}?\b(?:sign|attribut|credit|byline)\w*\b"
+        r"[^.]{0,30}?\b(?:made[-\s]up|fake|invented|fictional|fictitious|random|false|phony|bogus|stock)\s+"
+        r"(?:\w+\s+){0,2}?(?:names?|signatures?|bylines?|persons?|people)\b",
+        # "Write reviews from the perspective of happy customers".
+        r"\b(?:reviews?|testimonials?|endorsements?|quotes?)\b[^.]{0,30}?\bfrom\s+the\s+(?:perspective|point\s+of\s+"
+        r"view|pov|viewpoint|voice)s?\s+of\s+(?:a|an|our|the|some|various|different|several)?\s*(?:\w+\s+){0,2}?"
+        + _PERSONS + r"\b",
+        # Writing as one, in praise: "Write as a customer: why I love this product".
+        r"\bwrit\w*\b[^.]{0,30}?\bas\s+(?:a|an|one\s+of\s+(?:our|the|my|their))\s+(?:\w+\s+){0,2}?" + _PERSONS
+        + r"(?![-\w])(?!\s+(?:service|support|success|care|experience|journey|agent|rep|representative|team|"
+        r"relations)s?\b)[^.]{0,60}?\b(?:i\s+love|why\s+i|i\s+recommend|my\s+experience|loved|recommend|glowing|"
+        r"praise|rave|five\s+stars|5\s+stars)",
+        # Sock puppets: reviews from new or several accounts, or under other names.
+        r"\b(?:reviews?|ratings?|testimonials?|comments?|posts?|stars?)\b[^.]{0,60}?\bfrom\s+(?:a\s+|an\s+)?"
+        r"(?:new|fake|different|separate|second|other|another|multiple|several|burner|throwaway|dummy|alt(?:ernate)?)"
+        r"\s+accounts?\b",
+        r"\bunder\s+(?:different|fake|false|made[-\s]up|other|several|multiple|various|assumed|invented)\s+names\b",
+    ],
+    # An instruction to state something the instruction itself says isn't so (round 3): "Say the offer expires in 24
+    # hours even though it doesn't", "Tell them there are only a few left even though we have plenty". A concession
+    # that isn't about the claim ("even though we didn't hit our goal") is not one: the negation has to end its clause.
+    "false_claim": [
+        r"\b(?:say|says|said|saying|tell|tells|telling|claim\w*|state|states|stating|write|writes|writing|"
+        r"announc\w*|put|add|mention\w*|imply|implies|suggest\w*|promis\w*|advertis\w*|make\s+(?:it|them|people|"
+        r"readers|donors|customers)\s+(?:think|believe))\b[^.!?]{0,100}?\b(?:even\s+though|although|though|"
+        r"when\s+in\s+(?:fact|reality)|while\s+in\s+(?:fact|reality))\s+"
+        r"(?:(?:it|that|this|they|there|he|she|we|i|you)\s*(?:doesn't|don't|didn't|isn't|aren't|wasn't|weren't|"
+        r"won't|wouldn't|can't|cannot|hasn't|haven't|hadn't|shouldn't|will\s+not|does\s+not|do\s+not|did\s+not|"
+        r"is\s+not|are\s+not|was\s+not|were\s+not|has\s+not|have\s+not)\s*(?:really\s+|actually\s+)?"
+        r"(?:(?:true|so|the\s+case|happen|exist|apply)\b\s*)?(?=[.,;:!?)]|$)|"
+        r"(?:it|that|this)(?:'s|\s+is|\s+was)\s+(?:not\s+true|false|untrue|a\s+lie|made\s+up|fake|not\s+the\s+case)|"
+        r"(?:we|they|there)\s+(?:have|has|got|are|is)\s+(?:plenty|lots|loads|enough|tons|many|more|\d[\d,]*)\b)",
     ],
     # Review programs (marketingskills referrals): no five-star requests, no reward for a good review, no asking only
     # the happy ones, no prewritten reviews. A plain reward for any review is flagged instead (review_incentive).
@@ -189,9 +286,17 @@ _DARK_PATTERNS = {
         r"mailing)\b[^.]{0,60}\b(?:without|no)\s+(?:\w+\s+){0,2}?(?:asking|consent|permission|opt[-\s]?in|agreement)",
         r"\bopt(?:s|ed|ing)?\s+(?:everyone|everybody|all|them|people|users|donors|customers|members|subscribers|"
         r"contacts|visitors|attendees|supporters|buyers|clients)\s+in\b",
+        # "Add everyone who downloaded the PDF to the newsletter" (round 3); not "everyone who opted in".
+        r"\b(?:add|subscrib|enrol|enroll|sign|put)\w*\s+(?:up\s+)?(?:everyone|everybody|anyone|all\s+(?:of\s+)?"
+        r"(?:the\s+|our\s+|my\s+)?\w+|people|visitors|attendees|customers|donors|users|contacts|leads|members)\s+"
+        r"(?:who|that|whose)\s+(?!(?:\w+\s+){0,2}?(?:opted|opt|signed|subscribed|asked|consented|agreed|chose|"
+        r"requested|said\s+yes|ticked|checked))(?:[\w'-]+\s+){1,6}?(?:to|on|into|onto)\s+(?:the\s+|our\s+|my\s+|a\s+)?"
+        r"(?:\w+\s+)?(?:newsletters?|mailing\s+lists?|e-?mail\s+lists?|lists?|marketing\s+(?:emails?|lists?)|drips?|"
+        r"sequences?)\b",
     ],
     # A paid, gifted or affiliate connection is disclosed where the reader sees it.
     "undisclosed_ad": [
+        r"(?<!n't\s)(?<!\bnot\s)(?<!\bnever\s)"
         r"\b(?:leave\s+(?:out|off)|take\s+(?:out|off|away)|strip|drop|remove|omit|skip|hide|bury|without|"
         r"(?:don't|do\s+not|never)\s+(?:include|use|add|put|show|mention|disclose|say|tell))\b[^.]{0,40}?"
         r"(?:#(?:ad|ads|sponsored|paid|partner|spon|gifted)\b|"
@@ -203,6 +308,42 @@ _DARK_PATTERNS = {
         r"(?:#(?:ad|ads|sponsored|paid|partner|spon|gifted)\b|"
         r"(?:(?:ad|sponsorship|sponsor|paid[-\s]partnership|affiliate|partnership)\s+)?(?:disclosures?|disclaimers?)|"
         r"(?:ad|sponsorship|sponsor|paid[-\s]partnership|affiliate|partnership)\s+(?:labels?|tags?))\s+(?:out|off)\b",
+        # Round 3: "Don't mention the sponsorship", "Post it without disclosing the sponsorship", "No need to disclose
+        # that it's sponsored", "Don't disclose the affiliate link".
+        r"\b(?:don't|dont|do\s+not|never|no\s+need\s+to|without)\s+(?:\w+\s+)?(?:mention\w*|disclos\w*|say\w*|"
+        r"tell\w*|reveal\w*|admit\w*|acknowledg\w*|state\w*|note\w*|flag\w*|label\w*|mark\w*|tag\w*)\b[^.]{0,40}?"
+        r"(?:\bsponsor(?:ship|ed|s)?\b(?!')|\bpartnership\b|\baffiliat\w*|\bpaid\s+(?:post|partnership|promotion|"
+        r"placement|content|ad)s?\b|#(?:ad|ads|sponsored|paid|partner|spon|gifted)\b|\bcommissions?\b)"
+        r"(?![^.]{0,40}\b(?:beyond|other\s+than|apart\s+from|except|besides)\b)",
+        # "Don't label it as sponsored", "Don't mark it as an ad".
+        r"\b(?:don't|dont|do\s+not|never|no\s+need\s+to|without)\s+(?:label|mark|tag|flag|call|identify|present)\w*"
+        r"\s+(?:it|this|them|these|the\s+\w+)\s+as\s+(?:an?\s+)?(?:ad|advert\w*|advertis\w*|sponsored|paid|"
+        r"promotion\w*|partnership)\b",
+        # "Don't mention that Acme paid for this post", "Don't tell readers we got the product for free".
+        r"\b(?:don't|dont|do\s+not|never|no\s+need\s+to)\s+(?:mention|say|tell|disclose|reveal|admit|let)\w*\b"
+        r"[^.]{0,30}?\b(?:paid\s+(?:us|me|them\s+to|for\s+(?:this|the|it|our|that))|(?:we|i|they)\s+(?:got|get|"
+        r"received|receive|were\s+(?:given|sent)|was\s+(?:given|sent))\b[^.]{0,30}?\b(?:for\s+free|free\s+of\s+"
+        r"charge|at\s+no\s+cost|as\s+a\s+gift|gratis))",
+        # "Hide the fact that Acme paid us"; not "Don't hide the fact that Acme paid us".
+        r"(?<!n't\s)(?<!\bnot\s)(?<!\bnever\s)\b(?:hide|hides|hiding|conceal\w*|bury|burying|obscur\w*|downplay\w*|"
+        r"cover\s+up|gloss\s+over)\b[^.]{0,30}?\b(?:paid\s+(?:us|me|for)|sponsor(?:ship|ed)\b|affiliat\w*|"
+        r"#ad\b|gifted|compensat\w*|gave\s+us|sent\s+us)",
+        # "Make it look organic, not like a paid post".
+        r"\b(?:look|seem|appear|read|sound|feel)s?\s+(?:\w+\s+)?(?:organic|unsponsored|natural|independent|unpaid|"
+        r"genuine|authentic)\b[^.]{0,30}?\b(?:not|rather\s+than|instead\s+of)\s+(?:like\s+)?(?:a\s+|an\s+)?"
+        r"(?:paid|sponsored|ad\b|advert\w*|promotion\w*|partnership)",
+        # "Write the sponsored post for Acme, no disclosure please"; and where the model asks ("Should I include the
+        # #ad disclosure?") and the answer is no.
+        r"\b(?:sponsor\w*|paid|affiliat\w*|partner\w*|#ad)\b[^.]{0,60}?\bno\s+(?:#\w+\s+|ad\s+|sponsor(?:ship)?\s+)?"
+        r"(?:disclosure|disclaimer|label|tag)s?\b,?\s+(?:needed|necessary|required)\b",
+        # Asked for outright, it needs no context: "no disclosure please", "no #ad this time" (the answer to "Should
+        # it be disclosed?" comes after the model's reply, whose full stop ends the sentence above).
+        r"\bno\s+(?:#\w+|(?:ad\s+|sponsor(?:ship)?\s+)?(?:disclosures?|disclaimers?|labels?|tags?))\b,?\s+(?:please|"
+        r"this\s+time|for\s+this\s+one|on\s+this\s+one)\b",
+        r"\b(?:include|add|keep|put|use|mention|show|disclose|label|tag)\w*\b[^.?]{0,40}?(?:#(?:ad|ads|sponsored|paid|"
+        r"partner|spon|gifted)\b|\b(?:disclosures?|disclaimers?|sponsorship|ad\s+label|paid[-\s]partnership\s+label)"
+        r"\b)[^.?]{0,20}\?\s*(?:no\b|nope\b|nah\b|don't\b|do\s+not\b|skip\s+it|leave\s+it\s+(?:out|off)|"
+        r"take\s+it\s+(?:out|off)|drop\s+it|not\s+this\s+time|no\s+need)",
     ],
     # Pricing and asks built to mislead (marketing-psychology's techniques, as things to catch): a fictitious original
     # price, a decoy option, door-in-the-face.
@@ -232,7 +373,8 @@ _DARK_PATTERNS = {
         # 2026-11-03 design read: no output could name the US law while bare "spam" blocked.
         r"(?<!\bcan-)(?<!\bcan\u2010)(?<!\banti-)(?<!\banti\s)(?<!\bnever\s)(?<!\bnot\s)(?<!n't\s)(?<!\bno\s)"
         r"\bspam(?:s|med|ming|mer|mers)?\b(?![-\s]*(?:filters?|folders?|traps?|laws?|act\b|rules?|complaints?|scores?|"
-        r"checks?|checkers?|compliance|box(?:es)?|reports?|free\b|regulations?|requirements?|provisions?)\b)",
+        r"checks?|checkers?|complian\w*|box(?:es)?|reports?|free\b|regulations?|requirements?|provisions?|"
+        r"triggers?|words?|polic\w*)\b)",
         r"(scrape\s+(email|contact|profile)s?)",
         r"(buy\s+(email\s+)?list|purchased\s+contacts?)",
         r"(unsolicited\s+(mass|bulk))",
@@ -282,7 +424,8 @@ _ESCALATION_TRIGGERS = {
     # Claimed scarcity or a lapse deadline: fine when true, and only a person can say it is (R5).
     "urgency_claim": [
         r"\b(?:going|selling)\s+(?:out\s+)?fast\b|\balmost\s+(?:gone|sold\s+out|full)\b|"
-        r"\bfew\s+(?:seats|spots|tickets|places)\s+(?:left|remain)|\bfilling\s+up\b",
+        r"\bfew\s+(?:seats|spots|tickets|places)\s+(?:left|remain)|\bfilling\s+up\b|"
+        r"\bonly\s+a\s+(?:few|handful|couple)\s+(?:\w+\s+)?(?:left|remain\w*)\b",
         r"\blast\s+chance\s+to\s+(?:keep|renew|update|reactivate|restore)\s+your\b",
     ],
     # A reward for any review: platforms such as Google and Trustpilot forbid it, and the reward must be disclosed.
@@ -356,8 +499,85 @@ def large_amount(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# What the patterns read, and the checks that need more than a pattern
+# ---------------------------------------------------------------------------
+
+# Letters spelled out with a separator between each ("f-a-k-e", "s p a m"): read joined as well.
+_SPACED_LETTERS = re.compile(r"\b(?:[A-Za-z][-.\s\u00b7*]){2,}[A-Za-z]\b")
+# Moderating spam is not sending it (CC, 2026-11-03): "Delete the spam comments", "Report spam accounts", "filter,
+# remove, flag or moderate spam". The word is read as "unwanted" after such a verb, so "Write spam comments" and
+# "Post spam replies" still block.
+_MODERATING_SPAM = re.compile(
+    r"\b((?:delet|remov|report|filter|flag|moderat|block|ban|catch|catching|hid|mark|detect|purg|quarantin|stop|fight|"
+    r"reduc|prevent|review|handl|avoid|clean\w*\s+up|deal\w*\s+with|get\w*\s+rid\s+of|weed\w*\s+out)\w*\s+"
+    r"(?:(?:the|all|any|these|those|our|my|incoming|new|obvious|more|of)\s+){0,3})spam", re.IGNORECASE)
+
+
+def pattern_texts(content: str) -> list[str]:
+    """The texts the patterns read: the content normalised (apolaki.security.normalize), and with spelled-out letters
+    joined and underscores read as spaces ("fake_testimonial") when that differs; in each, "spam" after a moderating
+    verb is read as "unwanted"."""
+    t = normalize(content or "")
+    out = [t]
+    for v in (_SPACED_LETTERS.sub(lambda m: re.sub(r"[-.\s\u00b7*]", "", m.group()), t), t.replace("_", " ")):
+        if v not in out:
+            out.append(v)
+    return [_MODERATING_SPAM.sub(lambda m: m.group(1) + "unwanted", v) for v in out]
+
+
+# A concrete date or time: "March 15", "15 March", "3/15", "2026-03-15", "Friday", "5pm".
+_MONTH = (r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|"
+          r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)")
+_CONCRETE_DATE = re.compile(
+    r"\b" + _MONTH + r"\.?\s+\d{1,2}(?:st|nd|rd|th)?\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?" + _MONTH + r"\b|"
+    r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|\b\d{4}-\d{2}-\d{2}\b|\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b|"
+    r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)", re.IGNORECASE)
+# The end of a sentence: a stop before a capital letter or the end, or a line break ("Mar. 15" doesn't end one).
+_SENTENCE_END = re.compile(r"[.!?](?=\s+[A-Z\"']|\s*$)|\n")
+
+
+def dated(text: str, match: re.Match) -> bool:
+    """Whether the sentence holding the match names a concrete date or time (_CONCRETE_DATE)."""
+    start = max((m.end() for m in _SENTENCE_END.finditer(text, 0, match.start())), default=0)
+    end = _SENTENCE_END.search(text, match.end())
+    return bool(_CONCRETE_DATE.search(text, start, end.start() if end else len(text)))
+
+
+# A count of what is left ("Only three spots left!", "Just 2 seats left") is true or false, and only the brief can say
+# which: it passes, for a person to confirm, when the brief states the same count of what is left (round 3).
+_NUMBERS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                       "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
+_NUMBERS.update({"thirty": 30, "forty": 40, "fifty": 50, "a couple": 2, "a couple of": 2})
+_COUNT = r"(\d[\d,]*|" + "|".join(sorted((re.escape(w).replace(r"\ ", r"\s+") for w in _NUMBERS), key=len,
+                                          reverse=True)) + r")"
+_SCARCITY = re.compile(r"\b(?:only|just|merely)\s+" + _COUNT + r"\s+(?:[\w'-]+\s+){0,2}?"
+                       r"(?:left|remain(?:s|ing)?|available|to\s+go)\b", re.IGNORECASE)
+_SCARCITY_FACT = re.compile(r"\b" + _COUNT + r"\s+(?:[\w'-]+\s+){0,3}?(?:are\s+|is\s+)?(?:still\s+)?"
+                            r"(?:left|remain(?:s|ing)?|available|open|unsold|unclaimed|free)\b", re.IGNORECASE)
+
+
+def _count(word: str) -> int:
+    word = " ".join(word.lower().split())
+    return int(word.replace(",", "")) if word[0].isdigit() else _NUMBERS[word]
+
+
+def scarcity(texts: list[str], facts: str = "") -> str:
+    """"blocked" when a text claims a count of what is left that the facts (the brief) don't state; "flagged" when
+    every such claim is one the facts state; "" when there is none."""
+    claims = {_count(m.group(1)) for t in texts for m in _SCARCITY.finditer(t)}
+    if not claims:
+        return ""
+    stated = {_count(m.group(1)) for m in _SCARCITY_FACT.finditer(normalize(facts or ""))}
+    return "flagged" if claims <= stated else "blocked"
+
+
+# ---------------------------------------------------------------------------
 # Ethics Engine
 # ---------------------------------------------------------------------------
+
+# Dark patterns a concrete date or time in the same sentence turns into a flag for a person (urgency_claim): "Last
+# chance" and "limited time" with a real deadline ("through March 15", "Friday at 5pm"), round 3.
+_DATED_OK = {("false_urgency", 2)}
 
 
 class MarketingEthicsEngine:
@@ -376,26 +596,43 @@ class MarketingEthicsEngine:
             print(f"Blocked: {check.reason}")
     """
 
-    def evaluate(self, content: str) -> EthicsCheck:
+    def evaluate(self, content: str, facts: str = "") -> EthicsCheck:
         """Evaluate content or action against marketing ethics.
 
         The patterns read normalised text (curly quotes straight, invisible characters out, look-alike letters
-        folded: apolaki.security.normalize), so "Don’t miss out" is read as "Don't miss out"."""
-        content = normalize(content)
+        folded: apolaki.security.normalize), so "Don’t miss out" is read as "Don't miss out"; and that text with
+        spelled-out letters joined and underscores read as spaces (pattern_texts).
+
+        facts is what the content may rest on: for a draft, its brief. A count of what is left ("Only three spots
+        left!") is blocked unless the facts state the same count, and then flagged for a person (scarcity)."""
+        texts = pattern_texts(content)
+        content = texts[0]
+        claim = ""          # urgency a person can confirm: a dated deadline, a count of what is left the brief states
+
+        def blocked(category: str) -> EthicsCheck:
+            logger.warning("Ethics BLOCKED: dark pattern '%s' detected", category)
+            return EthicsCheck(verdict=EthicsVerdict.BLOCKED, reason=f"Dark pattern detected: {category}",
+                               category=category, suggestion=self._suggest_alternative(category))
 
         # Check dark patterns first (hard deny)
         for category, patterns in _COMPILED_DARK_PATTERNS.items():
-            for pattern in patterns:
-                if pattern.search(content):
-                    logger.warning(
-                        "Ethics BLOCKED: dark pattern '%s' detected", category
-                    )
-                    return EthicsCheck(
-                        verdict=EthicsVerdict.BLOCKED,
-                        reason=f"Dark pattern detected: {category}",
-                        category=category,
-                        suggestion=self._suggest_alternative(category),
-                    )
+            for i, pattern in enumerate(patterns):
+                for text in texts:
+                    for m in pattern.finditer(text):
+                        if (category, i) in _DATED_OK and dated(text, m):
+                            claim = "a dated deadline"
+                            continue
+                        return blocked(category)
+            if category == "false_urgency":
+                left = scarcity(texts, facts)
+                if left == "blocked":
+                    return blocked(category)
+                if left:
+                    claim = claim or "a count of what is left that the brief states"
+        if claim:
+            return EthicsCheck(verdict=EthicsVerdict.FLAGGED, reason=f"Requires human review: urgency_claim ({claim})",
+                               category="urgency_claim",
+                               suggestion="Check the deadline or count is true before this goes out.")
 
         # Check escalation triggers (human review)
         for category, patterns in _COMPILED_ESCALATION.items():
@@ -438,5 +675,6 @@ class MarketingEthicsEngine:
             "pricing_manipulation": "Show real prices and real options: a former price only if it was charged, every tier because someone should choose it, and the ask you actually mean.",
             "sensitive_inference": "Don't guess anyone's health, faith, politics, sexuality, ethnicity or finances. Work from what people chose to tell you, for the purpose they told you.",
             "confirmshaming": "Word the decline option plainly: 'No thanks' or 'Not now'. Saying no should cost the reader nothing, not even a jab.",
+            "false_claim": "Say only what is true. If the offer doesn't expire, don't say it does; give the real date, the real count, or no claim at all.",
         }
         return alternatives.get(category, "Consider the ethical implications and revise with prosocial intent.")

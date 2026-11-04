@@ -34,17 +34,24 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
     sharing data with outside parties, claimed scarcity and lapse deadlines, rewards for reviews, targeting by a
     sensitive trait or condition ("people with depression"), and tracking people for ads (custom or lookalike
     audiences made from a list, retargeting, tracking pixels, fingerprinting).
+  - A count of what is left ("Only three spots left!") passes only when the brief states the same count, and then goes
+    to a person; a "last chance" or "limited time" in a sentence that names a real date or time ("through March 15",
+    "Friday at 5pm") goes to a person instead of being blocked; an instruction to say something it calls untrue ("even
+    though it doesn't") is blocked; moderating spam ("Delete the spam comments") is not sending it.
   - They are patterns, and patterns have limits: they see only the negations they were written for ("no fake
-    testimonials" and "We never spam you" pass; "Delete the spam comments" is still blocked), and they can't catch a
-    paraphrase they weren't written for. The known misses are kept as expected failures in
-    `tests/test_red_team_probes.py`. The person who approves the draft is the check that holds.
+    testimonials" and "We never spam you" pass), and they can't catch a paraphrase they weren't written for. The known
+    misses are kept as expected failures in `tests/test_red_team_probes.py`. The person who approves the draft is the
+    check that holds.
   - Both read normalised text: curly quotes are straightened, invisible characters removed and look-alike letters
     (fullwidth, Cyrillic, accented) folded first, so "Don’t miss out" typed on a phone is read as "Don't miss out".
   - They run on every brief before the model is called, on every draft, and in the interactive chat on each message
-    and on each reply. In chat a message is also read together with the person's last six messages, since the model
-    reads them together and a request split across turns passes a check of each half (a blocked message never
-    reaches the model). A blocked reply gets one revision, checked again; if it is still blocked, the chat answers
-    with a refusal and the reason, never the blocked text.
+    and on each reply. In chat a message is also read together with the person's last six messages and the model's
+    replies between them, since the model reads them together and a request split across turns passes a check of
+    each half, sometimes joined by the model's own question ("Should I include the #ad disclosure?" "No, leave it
+    out."). A blocked message never reaches the model. A blocked reply gets one revision, checked again; if it is
+    still blocked, the chat answers with a refusal and the reason, never the blocked text. The scaffold's own refusals
+    are marked where they are made and left out of that reading; a blocked draft is kept for a person in the queue,
+    not in what the model reads next.
 - **Outside text is screened before anything uses it.** Layer 1 of
   [Garuda](https://github.com/Liberation-Labs-THCoalition/Project-Garuda), our injection screen, is vendored in
   `apolaki/security/garuda` (its notice kept beside it). Every brief is screened before its ethics check and before
