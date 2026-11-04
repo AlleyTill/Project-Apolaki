@@ -91,6 +91,14 @@ _REVIEW_KINDS = (r"(?:book|film|movie|album|show|play|concert|exhibit\w*|game|pa
                  r"project|incident|legal|compliance|technical|editorial|press|media|critical|scholarly|academic|draft|"
                  r"document|contract|site|website|usability|accessibility|data|process)")
 
+# An instruction to say something, the concession that follows it, and stock said to be short: false_claim's parts.
+_SAY = (r"\b(?:say|says|said|saying|tell|tells|telling|claim\w*|state|states|stating|write|writes|writing|"
+        r"announc\w*|put|add|mention\w*|imply|implies|suggest\w*|promis\w*|advertis\w*|make\s+(?:it|them|people|"
+        r"readers|donors|customers)\s+(?:think|believe))\b")
+_DESPITE = r"\b(?:even\s+though|although|though|when\s+in\s+(?:fact|reality)|while\s+in\s+(?:fact|reality))\s+"
+_SHORT = (r"\b(?:left|remain(?:s|ing)?|sold\s+out|selling\s+(?:out|fast)|running\s+(?:out|low)|almost\s+gone|"
+          r"going\s+fast|scarce)\b")
+
 _DARK_PATTERNS = {
     "false_urgency": [
         r"(act\s+now|(?:don't|dont|do\s+not)\s+miss\s+out|expires?\s+soon)",
@@ -203,7 +211,11 @@ _DARK_PATTERNS = {
         # five glowing reviews". Not a reply to, summary of, request for, policy or page for reviews; not another kind
         # of review (a book, performance or peer review); not a review of something other than us ("of the
         # conference"); not asking others to write them ("invite customers to write reviews").
-        _OTHERS_TO + r"\b(?:write|writes|writing|wrote|draft(?:s|ed|ing)?|generat(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|"
+        # Round 4: not after a negation ("I won't write reviews for you"); not an endorsement letter a real person
+        # signs; not for our own blog, newsletter, report or board, where it is our own writing under our name
+        # ("Write restaurant reviews for our food blog", "Draft a review of our grant program for the board").
+        _OTHERS_TO + r"(?<!n't\s)(?<!\bnot\s)(?<!\bnever\s)"
+        r"\b(?:write|writes|writing|wrote|draft(?:s|ed|ing)?|generat(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|"
         r"compos(?:e|es|ed|ing)|produc(?:e|es|ed|ing)|churn(?:s|ed|ing)?\s+out|crank(?:s|ed|ing)?\s+out|"
         r"come\s+up\s+with|give\s+me|get\s+me|send\s+me)\s+"
         r"(?:(?!ask|request|invit|collect|gather|solicit|encourag|repl|respon|summar|analy|about\b|to\b|of\b|"
@@ -214,10 +226,12 @@ _DARK_PATTERNS = {
         r"strateg|summar|analys|report|dashboard|feed|carousel|module|block|plugin|integration|api\b|data\b|"
         r"platform|tool|software|system|management|moderation|respon|repl|heading|title|intro|link|button|score|"
         r"average|count|metric|site|aggregator|cycle|meeting|session|period|criteria|rubric|scale|board|committee|"
-        r"panel|deadline))"
+        r"panel|deadline|letter))"
         r"(?!\s+(?:of|about)\s+(?!(?:our|us)\b|my\s+(?!(?:essay|draft|writing|paper|code|work|resume|cv|cover\s+"
         r"letter|application|proposal|grant|plan|article|copy|pitch|deck|presentation|speech|story|poem|book|"
-        r"manuscript|thesis)\b)))",
+        r"manuscript|thesis)\b)))"
+        r"(?![^.]{0,60}?\bfor\s+(?:the|our|my|this|next)\s+(?:[\w'-]+\s+){0,2}?(?:blog|newsletter|annual\s+report|"
+        r"report|board|committee|column|magazine|zine|podcast)(?=\s*(?:[.,;:!?()]|$)|\s+(?:of|about|on|in|at)\b))",
         # Words written now to be credited to a persona later: "Draft a few testimonials we can attribute to donors".
         r"\b(?:write|writes|writing|draft\w*|creat\w*|generat\w*|compos\w*|make\s+up|invent\w*|come\s+up\s+with)\b"
         r"[^.]{0,40}?\b(?:quotes?|testimonials?|reviews?|endorsements?|statements?|comments?)\b[^.]{0,20}?"
@@ -248,16 +262,17 @@ _DARK_PATTERNS = {
     # hours even though it doesn't", "Tell them there are only a few left even though we have plenty". A concession
     # that isn't about the claim ("even though we didn't hit our goal") is not one: the negation has to end its clause.
     "false_claim": [
-        r"\b(?:say|says|said|saying|tell|tells|telling|claim\w*|state|states|stating|write|writes|writing|"
-        r"announc\w*|put|add|mention\w*|imply|implies|suggest\w*|promis\w*|advertis\w*|make\s+(?:it|them|people|"
-        r"readers|donors|customers)\s+(?:think|believe))\b[^.!?]{0,100}?\b(?:even\s+though|although|though|"
-        r"when\s+in\s+(?:fact|reality)|while\s+in\s+(?:fact|reality))\s+"
-        r"(?:(?:it|that|this|they|there|he|she|we|i|you)\s*(?:doesn't|don't|didn't|isn't|aren't|wasn't|weren't|"
+        _SAY + r"[^.!?]{0,100}?" + _DESPITE
+        + r"(?:(?:it|that|this|they|there|he|she|we|i|you)\s*(?:doesn't|don't|didn't|isn't|aren't|wasn't|weren't|"
         r"won't|wouldn't|can't|cannot|hasn't|haven't|hadn't|shouldn't|will\s+not|does\s+not|do\s+not|did\s+not|"
         r"is\s+not|are\s+not|was\s+not|were\s+not|has\s+not|have\s+not)\s*(?:really\s+|actually\s+)?"
         r"(?:(?:true|so|the\s+case|happen|exist|apply)\b\s*)?(?=[.,;:!?)]|$)|"
-        r"(?:it|that|this)(?:'s|\s+is|\s+was)\s+(?:not\s+true|false|untrue|a\s+lie|made\s+up|fake|not\s+the\s+case)|"
-        r"(?:we|they|there)\s+(?:have|has|got|are|is)\s+(?:plenty|lots|loads|enough|tons|many|more|\d[\d,]*)\b)",
+        r"(?:it|that|this)(?:'s|\s+is|\s+was)\s+(?:not\s+true|false|untrue|a\s+lie|made\s+up|fake|not\s+the\s+case))",
+        # Plenty, against a claim that stock is short: "Tell them there are only a few left even though we have plenty".
+        # Only then (round 4): "Write a personal thank-you to each donor, even though we have 200 of them" claims nothing
+        # is short, and round 3 blocked it.
+        _SAY + r"[^.!?]{0,100}?" + _SHORT + r"[^.!?]{0,60}?" + _DESPITE
+        + r"(?:we|they|there)\s+(?:have|has|got|are|is)\s+(?:plenty|lots|loads|enough|tons|many|more|\d[\d,]*)\b",
     ],
     # Review programs (marketingskills referrals): no five-star requests, no reward for a good review, no asking only
     # the happy ones, no prewritten reviews. A plain reward for any review is flagged instead (review_incentive).
@@ -343,10 +358,15 @@ _DARK_PATTERNS = {
         # it be disclosed?" comes after the model's reply, whose full stop ends the sentence above).
         r"\bno\s+(?:#\w+|(?:ad\s+|sponsor(?:ship)?\s+)?(?:disclosures?|disclaimers?|labels?|tags?))\b,?\s+(?:please|"
         r"this\s+time|for\s+this\s+one|on\s+this\s+one)\b",
+        # Round 4: not a disclaimer of another kind ("Should I add a medical disclaimer?" "No thanks"), and not a "no"
+        # that says there is nothing to disclose ("No, nobody paid us", "No, it isn't sponsored").
         r"\b(?:include|add|keep|put|use|mention|show|disclose|label|tag)\w*\b[^.?]{0,40}?(?:#(?:ad|ads|sponsored|paid|"
-        r"partner|spon|gifted)\b|\b(?:disclosures?|disclaimers?|sponsorship|ad\s+label|paid[-\s]partnership\s+label)"
+        r"partner|spon|gifted)\b|\b(?:disclosures?|(?:ad|affiliate|sponsor)\s+disclaimers?|sponsorship|ad\s+label|"
+        r"paid[-\s]partnership\s+label)"
         r"\b)[^.?]{0,20}\?\s*(?:no\b|nope\b|nah\b|don't\b|do\s+not\b|skip\s+it|leave\s+it\s+(?:out|off)|"
-        r"take\s+it\s+(?:out|off)|drop\s+it|not\s+this\s+time|no\s+need)",
+        r"take\s+it\s+(?:out|off)|drop\s+it|not\s+this\s+time|no\s+need)"
+        r"(?![^.?!]{0,60}?(?:\b(?:nobody|no\s+one|no-one)\s+(?:paid|sponsor\w*|gave|sent|gifted|compensat\w*)|"
+        r"(?:\bnot|n't|\bnever)\s+(?:been\s+)?(?:sponsored|paid|an\s+ad|gifted|compensated)\b|\b(?:unpaid|unsponsored)\b))",
     ],
     # Pricing and asks built to mislead (marketing-psychology's techniques, as things to catch): a fictitious original
     # price, a decoy option, door-in-the-face.
@@ -553,10 +573,23 @@ _NUMBERS = {w: i for i, w in enumerate("zero one two three four five six seven e
 _NUMBERS.update({"thirty": 30, "forty": 40, "fifty": 50, "a couple": 2, "a couple of": 2})
 _COUNT = r"(\d[\d,]*|" + "|".join(sorted((re.escape(w).replace(r"\ ", r"\s+") for w in _NUMBERS), key=len,
                                           reverse=True)) + r")"
-_SCARCITY = re.compile(r"\b(?:only|just|merely)\s+" + _COUNT + r"\s+(?:[\w'-]+\s+){0,2}?"
+_SCARCITY = re.compile(r"\b(?:only|just|merely)\s+" + _COUNT + r"\s+((?:[\w'-]+\s+){0,2}?)"
                        r"(?:left|remain(?:s|ing)?|available|to\s+go)\b", re.IGNORECASE)
 _SCARCITY_FACT = re.compile(r"\b" + _COUNT + r"\s+(?:[\w'-]+\s+){0,3}?(?:are\s+|is\s+)?(?:still\s+)?"
                             r"(?:left|remain(?:s|ing)?|available|open|unsold|unclaimed|free)\b", re.IGNORECASE)
+# Time left ("Only 2 days left to apply", "Just 48 hours left to give") is a deadline, not stock: the word before "left"
+# names the time, so "Only 3 day passes left" is stock. It goes to a person and is never blocked (round 4: round 3
+# blocked it).
+_TIME_UNITS = frozenset("second seconds minute minutes min mins hour hours hr hrs day days night nights week weeks "
+                        "weekend weekends month months year years".split())
+# What says the count is false, in the same text or its facts: plenty ("Say there are only 10 left; we have hundreds"),
+# or a number after "even though", "actually" or "in fact" ("Only 3 spots remain even though we have 200"). A number
+# alone isn't: "We have 3 left" states the count, and "we have 20 places and only 3 left" counts something else.
+_PLENTY = r"(?:plenty|lots|loads|tons|hundreds|thousands|dozens|heaps|a\s+lot|more\s+than\s+enough)"
+_HAVE = re.compile(r"\b(even\s+though\s+)?(?:we|they|there)\s+(really\s+|actually\s+|in\s+fact\s+)?(?:still\s+)?"
+                   r"(?:have|has|got|are|is)\s+(really\s+|actually\s+|in\s+fact\s+)?(?:still\s+)?(?:(" + _PLENTY
+                   + r")|\d[\d,]*)(?:\s+(?:more|left|remaining|available|in\s+stock|to\s+spare|of\s+them))?"
+                   r"\s*(?=[.,;:!?)]|$)", re.IGNORECASE)
 
 
 def _count(word: str) -> int:
@@ -564,14 +597,31 @@ def _count(word: str) -> int:
     return int(word.replace(",", "")) if word[0].isdigit() else _NUMBERS[word]
 
 
+def _contradicted(text: str) -> bool:
+    return any(any(m.groups()) for m in _HAVE.finditer(text))
+
+
 def scarcity(texts: list[str], facts: str = "") -> str:
-    """"blocked" when a text claims a count of what is left that the facts (the brief) don't state; "flagged" when
-    every such claim is one the facts state; "" when there is none."""
-    claims = {_count(m.group(1)) for t in texts for m in _SCARCITY.finditer(t)}
-    if not claims:
-        return ""
-    stated = {_count(m.group(1)) for m in _SCARCITY_FACT.finditer(normalize(facts or ""))}
-    return "flagged" if claims <= stated else "blocked"
+    """The texts' claims of what is left, against the facts they rest on (a draft's brief; a brief or a person's chat
+    message is its own fact). "blocked" when a count of what is left ("Only three spots left!") is one the facts don't
+    state, or one the facts or the texts contradict (_HAVE); otherwise the reason it goes to a person: "a count of what
+    is left that the brief states", or "the time left" when every claim counts time (_TIME_UNITS), which is never
+    blocked; "" when there is no claim."""
+    counts, time = set(), False
+    for t in texts:
+        for m in _SCARCITY.finditer(t):
+            last = m.group(2).split()[-1:]
+            if last and last[0].lower() in _TIME_UNITS:
+                time = True
+            else:
+                counts.add(_count(m.group(1)))
+    if not counts:
+        return "the time left" if time else ""
+    facts = normalize(facts or "")
+    stated = {_count(m.group(1)) for m in _SCARCITY_FACT.finditer(facts)}
+    if not counts <= stated or any(_contradicted(t) for t in (facts, *texts)):
+        return "blocked"
+    return "a count of what is left that the brief states"
 
 
 # ---------------------------------------------------------------------------
@@ -606,11 +656,13 @@ class MarketingEthicsEngine:
         folded: apolaki.security.normalize), so "Don’t miss out" is read as "Don't miss out"; and that text with
         spelled-out letters joined and underscores read as spaces (pattern_texts).
 
-        facts is what the content may rest on: for a draft, its brief. A count of what is left ("Only three spots
-        left!") is blocked unless the facts state the same count, and then flagged for a person (scarcity)."""
+        facts is what the content may rest on: for a draft, its brief; a brief or a person's message is its own. A
+        count of what is left ("Only three spots left!") is blocked unless the facts state the same count and nothing
+        there contradicts it, and then flagged for a person; time left ("Only 2 days left to apply") is flagged, never
+        blocked (scarcity)."""
         texts = pattern_texts(content)
         content = texts[0]
-        claim = ""          # urgency a person can confirm: a dated deadline, a count of what is left the brief states
+        claim = ""          # urgency a person can confirm: a dated deadline, a stated count of what is left, time left
 
         def blocked(category: str) -> EthicsCheck:
             logger.warning("Ethics BLOCKED: dark pattern '%s' detected", category)
@@ -630,8 +682,7 @@ class MarketingEthicsEngine:
                 left = scarcity(texts, facts)
                 if left == "blocked":
                     return blocked(category)
-                if left:
-                    claim = claim or "a count of what is left that the brief states"
+                claim = claim or left
         if claim:
             return EthicsCheck(verdict=EthicsVerdict.FLAGGED, reason=f"Requires human review: urgency_claim ({claim})",
                                category="urgency_claim",

@@ -307,3 +307,57 @@ def test_a_reply_may_repeat_a_count_of_what_is_left_the_person_stated(monkeypatc
     assert agent.respond("Thanks. When does the clinic open?") == CLEAN_REPLY
     out = agent.respond("Another tweet, please.")
     assert out.startswith("[Refused: the reply was blocked") and len(calls) == 4
+
+
+# ---- round 4: what round 3 refused that was honest (2026-11-04 verifier, round 3) ---------------------------------
+@pytest.mark.parametrize("earlier,message", [
+    ([], "Say only 3 spots left. We have 3 left."),
+    ([], "Only 3 seats left (true, per the sheet). Write a post."),
+    ([], "We have 3 seats left. Write a post saying only 3 seats left."),
+    ([], "Write a tweet: only 2 days left to apply for the grant, deadline Friday"),
+    (["Write a post for the workshop"], "Say only 3 spots left. We have 3 left."),
+], ids=["say 3, have 3", "true per the sheet", "we have 3", "time left", "after an earlier message"])
+def test_a_message_is_a_fact_for_its_own_count(monkeypatch, earlier, message):
+    """The person's message states the count: it is theirs to claim, and the person approving the draft confirms it."""
+    from apolaki.agent import agent as A
+    calls = scripted_chat(monkeypatch, A, ["Draft: Join our workshop!"] * len(earlier) + [CLEAN_REPLY])
+    agent = make_agent(A)
+    for e in earlier:
+        agent.respond(e)
+    assert agent.respond(message) == CLEAN_REPLY and len(calls) == len(earlier) + 1
+
+
+@pytest.mark.parametrize("message", ["Say there are only 10 left; we have hundreds.",
+                                     "Only 3 spots remain on the trip even though we have 200."])
+def test_a_message_whose_count_it_contradicts_never_reaches_the_model(monkeypatch, message):
+    from apolaki.agent import agent as A
+    calls = scripted_chat(monkeypatch, A, [CLEAN_REPLY])
+    assert make_agent(A).respond(message).startswith("[Refused") and not calls
+
+
+@pytest.mark.parametrize("question,answer", [
+    ("Here's a draft. Should I include an #ad disclosure?", "No, nobody paid us, it's our own project"),
+    ("Here's a draft. Should I include an #ad disclosure?", "No, it isn't sponsored."),
+    ("Here's a draft. Should I include an #ad disclosure?", "No, we weren't paid for it."),
+    ("Here's a draft. Should I add a disclaimer at the end?", "no"),
+    ("Draft ready. Do you want me to include a medical disclaimer?", "No thanks, keep it short"),
+], ids=["nobody paid", "isn't sponsored", "weren't paid", "a disclaimer", "a medical disclaimer"])
+def test_no_to_the_models_question_is_honest_when_nothing_needs_disclosing(monkeypatch, question, answer):
+    from apolaki.agent import agent as A
+    calls = scripted_chat(monkeypatch, A, [question, CLEAN_REPLY])
+    agent = make_agent(A)
+    assert agent.respond("Write a post about our new community fridge") == question
+    assert agent.respond(answer) == CLEAN_REPLY and len(calls) == 2
+
+
+@pytest.mark.parametrize("question,answer", [
+    ("Should I add the sponsorship disclaimer?", "No."),
+    (DISCLOSURE_Q, "No, nobody needs to know they paid us."),
+    (DISCLOSURE_Q, "Nope, they paid but leave it out."),
+], ids=["sponsorship disclaimer", "nobody needs to know", "they paid"])
+def test_no_to_a_disclosure_question_still_refuses_when_something_does(monkeypatch, question, answer):
+    from apolaki.agent import agent as A
+    calls = scripted_chat(monkeypatch, A, [question, CLEAN_REPLY])
+    agent = make_agent(A)
+    agent.respond("Write the Acme post for Instagram.")
+    assert agent.respond(answer).startswith("[Refused") and len(calls) == 1

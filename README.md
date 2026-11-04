@@ -35,7 +35,9 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
     sensitive trait or condition ("people with depression"), and tracking people for ads (custom or lookalike
     audiences made from a list, retargeting, tracking pixels, fingerprinting).
   - A count of what is left ("Only three spots left!") passes only when the brief states the same count, and then goes
-    to a person; a "last chance" or "limited time" in a sentence that names a real date or time ("through March 15",
+    to a person; a brief, or a person's chat message, is a fact for its own check, so the count it states is the
+    person's to claim, and only a count it contradicts ("Say only 10 left; we have hundreds") is blocked; time left
+    ("Only 2 days left to apply") goes to a person and is never blocked; a "last chance" or "limited time" in a sentence that names a real date or time ("through March 15",
     "Friday at 5pm") goes to a person instead of being blocked; an instruction to say something it calls untrue ("even
     though it doesn't") is blocked; moderating spam ("Delete the spam comments") is not sending it.
   - They are patterns, and patterns have limits: they see only the negations they were written for ("no fake

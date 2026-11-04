@@ -151,8 +151,10 @@ def ethics_check(content: str, facts: str = "") -> tuple[str, str]:
     MarketingEthicsEngine (deny / escalate / allow, apolaki.security.ethics). Neither replaces the approval queue:
     a person still approves everything before it is published.
 
-    facts is what the content may rest on (a draft's brief, a chat reply's requests): a count of what is left ("Only
-    three spots left!") is blocked unless the facts state the same count, and then flagged."""
+    facts is what the content may rest on (a draft's brief, a chat reply's requests; a brief or the person's message is
+    its own): a count of what is left ("Only three spots left!") is blocked unless the facts state the same count and
+    nothing there contradicts it, and then flagged; time left ("Only 2 days left to apply") is flagged, never
+    blocked."""
     own = _own_ethics_check(content, facts)
     check = _ENGINE.evaluate(content, facts=facts)
     engine = (EthicsVerdict(check.verdict).value, f"{check.reason} (ethics engine)")
@@ -169,7 +171,8 @@ def _own_ethics_check(content: str, facts: str = "") -> tuple[str, str]:
             if any(not ("dated" in pattern.groupindex and dated(t, m)) for t in texts for m in pattern.finditer(t)):
                 return "blocked", f"Dark pattern detected: {category}"
     if scarcity(texts, facts) == "blocked":
-        return "blocked", "Dark pattern detected: false_urgency (a count of what is left that the brief doesn't state)"
+        return "blocked", ("Dark pattern detected: false_urgency (a count of what is left that the brief doesn't state, "
+                           "or that it contradicts)")
 
     amount = large_amount(content)      # "$5,000", "$1.2M", "50,000 USD": not only "$" and four digits (R3)
     if amount:
@@ -704,7 +707,7 @@ class ApolakiAgent:
         left out: each is marked where it is made (SCAFFOLD_MARK), since it names the category it refused ("spam"),
         which would block the next message. A reply is checked with what the person said as its facts, so a count of
         what is left that they stated may be repeated."""
-        verdict, reason = ethics_check(user_message)
+        verdict, reason = ethics_check(user_message, facts=user_message)     # their count is theirs to claim
         if verdict == "blocked":
             return f"[Refused: the request was blocked by the ethics check ({reason}). Nothing was sent to the model.]"
         window, n_earlier = self.recent_requests(user_message)
@@ -791,7 +794,9 @@ class ApolakiAgent:
         # written for instructions ("write a testimonial as if you're a customer"),
         # and instructions arrive in the brief; before 2026-09-23 the check only ever
         # ran on the output, where such phrases never appear.
-        b_verdict, b_reason = ethics_check(brief)
+        # The brief is its own fact (round 4): a count of what is left it states is the person's claim, for the person
+        # who approves the draft to confirm; one it contradicts ("only 10 left; we have hundreds") is blocked.
+        b_verdict, b_reason = ethics_check(brief, facts=brief)
         if b_verdict == "blocked":
             return {
                 "draft": "",
