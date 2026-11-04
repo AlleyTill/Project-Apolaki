@@ -1159,3 +1159,31 @@ def test_a_dict_key_naming_the_person_is_redacted_in_the_belief_log(home):
         pytest.fail(f"the erase left the name in a belief-log key: {e}")
     last = json.loads((home / "engine_beliefs_log.jsonl").read_text().splitlines()[2])
     assert last["notes"] == {"[erased]": "quote exactly"}
+
+
+def test_a_new_near_match_alone_changes_the_code(home):
+    """The code covers what the dry run lists to keep as well as what it removes: a near-match added after the dry run
+    is one nobody has read, so the old code no longer erases."""
+    from apolaki.agent import erase as X
+    plant(home)
+    code = X.plan(PERSON).code
+    con = raw_db(home)
+    con.execute("INSERT INTO memories (id, content, created_at) VALUES ('other', ?, '2026-01-01')", (QUINTEROVA,))
+    con.commit()
+    con.close()
+    p = X.plan(PERSON)
+    assert p.near and p.code != code
+    with pytest.raises(X.EraseError, match="changed since the dry run"):
+        X.erase(PERSON, confirm=code, by="x", reason="asked", not_them=("marisol quinterova",))
+
+
+def test_a_file_outside_memory_with_only_a_near_match_is_listed(home):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store("Marisol Quintero leads the tenant union.")
+    s.close()
+    (home / "approval-queue").mkdir()
+    (home / "approval-queue" / "20261101_000000_social.json").write_text(json.dumps({"content": QUINTEROVA}))
+    p = X.plan(PERSON)
+    assert p.elsewhere == [] and p.elsewhere_near == [("approval-queue/20261101_000000_social.json", 1)]
+    assert "approval-queue/20261101_000000_social.json (1 near-match(es))" in X.describe(p)
