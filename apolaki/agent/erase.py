@@ -41,7 +41,9 @@ What it removes:
   - every memory with a column that names the person (text, tags, source, archive_reason, any column), archived ones
     included, each with its embedding (the row's blob and its vector-index entry). A blob counts as text unless it
     reads as an embedding's float numbers (all under 128; text in another encoding doesn't), so a name in a blob of
-    Latin-1 text is found;
+    Latin-1 text is found; and every blob is read as UTF-16 and UTF-32 as well, in either byte order, with a byte-order
+    mark or without (round 4), so a name stored in one of those is found too. The vector indexes' chunks are the one
+    exception: they hold copies of the rows' embeddings, and the erase drops and refills them from the rows;
   - the person's entity rows (an entity whose name contains the person's, such as "Dr. María López", counts), every
     mention row and triple that names them or touches them or an erased memory, and every other entity left with no
     memory behind it, since it came only from what was erased;
@@ -70,8 +72,8 @@ someone else (where it is), never the name.
 What it can't do:
   - find the person by anything but the name and aliases given. A nickname, initials, a pronoun, a role ("our board
     chair"), a misspelling or the parts in another order ("Quintero, Marisol") isn't found; list such variants as
-    aliases, and read what each finds in the dry run. The byte check of the database files doesn't take markup out
-    (the rows are read with it taken out).
+    aliases, and read what each finds in the dry run. The byte check of the database files doesn't take markup out,
+    nor read UTF-16 or UTF-32 (the rows are read with markup taken out, and in both).
   - erase by a name shorter than three letters (a two-character Chinese name included): it would match inside too much.
   - keep the rest of a memory. A memory that names the person goes whole, with whatever else it said; the dry run
     shows each one, so a person can store again what should stay, without the name.
@@ -332,19 +334,19 @@ def _near_in(hit: re.Pattern, loose: re.Pattern, folded: str) -> list[str]:
             if not hit.match(folded, m.start())]
 
 
-def _near_words(hit: re.Pattern, loose: re.Pattern, *texts) -> list[str]:
+def _near_words(hit: re.Pattern, loose: re.Pattern, *texts, fold=_fold) -> list[str]:
     """The near-matches in any of the texts, read as stored, with escapes decoded and with markup taken out."""
     out: list[str] = []
     for t in texts:
         if isinstance(t, str) and t:
             for v in _variants(t):
-                out += [w for w in _near_in(hit, loose, _fold(v)) if w not in out]
+                out += [w for w in _near_in(hit, loose, fold(v)) if w not in out]
     return out
 
 
-def _names_in(hit: re.Pattern, *texts) -> bool:
+def _names_in(hit: re.Pattern, *texts, fold=_fold) -> bool:
     """Whether any of the texts names the person, read as stored and with escapes decoded."""
-    return any(hit.search(_fold(v)) for t in texts if isinstance(t, str) and t for v in _variants(t))
+    return any(hit.search(fold(v)) for t in texts if isinstance(t, str) and t for v in _variants(t))
 
 
 def _q(ident: str) -> str:
@@ -394,7 +396,8 @@ def _is_vector(raw: bytes) -> bool:
 def _cell_text(value) -> str | None:
     """A cell as text: a string as it is; a blob that is valid UTF-8 decoded; a blob that reads as an embedding's
     numbers (_is_vector) None, since its bytes are numbers, left to the byte check; any other blob decoded as Latin-1,
-    since it may be text in another encoding and the name in it must be found."""
+    since it may be text in another encoding and the name in it must be found. A blob is read in the wide encodings
+    too (_wide_texts)."""
     if isinstance(value, str):
         return value
     if isinstance(value, (bytes, memoryview)):
@@ -406,28 +409,112 @@ def _cell_text(value) -> str | None:
     return None
 
 
+# Text in a blob can be UTF-16 or UTF-32, in either byte order, with a byte-order mark or without (round 4: the round 3
+# verifier stored a name so, and the erase recorded verified:true; read as float numbers, or as UTF-8 with a NUL between
+# the letters, it was never seen). Every blob is read in each, at each alignment a header could leave it at. A vector
+# read so is noise that holds the name or doesn't, like any other text. The one exception is a vector index's chunks
+# (_vector_chunk_tables): megabytes of copies of the rows' own embeddings, which are read, and dropped and refilled
+# from those rows by every erase (_rebuild_vec).
+_WIDE = (("utf-16-le", 2), ("utf-16-be", 2), ("utf-32-le", 4), ("utf-32-be", 4))
+# For UTF-32 without the codec's error handler, which runs once for each unit past U+10FFFF, most of a vector's units
+# (3 ms a vector): such a unit is read as NUL instead. Its top byte is not 0, or the next one is past 0x10.
+_PAST_TOP = bytes([0] + [1] * 255)
+_PAST_MID = bytes([0] * 0x11 + [1] * 0xEF)
+_KEEP_UNIT = bytes([0xFF, 0x00]) + bytes(254)
+
+
+def _utf32(raw: bytes, little: bool) -> str:
+    """raw, a whole number of units, as UTF-32, each unit past U+10FFFF read as NUL (a surrogate as U+FFFD)."""
+    top, mid = (raw[3::4], raw[2::4]) if little else (raw[0::4], raw[1::4])
+    past = int.from_bytes(top.translate(_PAST_TOP), "big") | int.from_bytes(mid.translate(_PAST_MID), "big")
+    keep = past.to_bytes(len(top), "big").translate(_KEEP_UNIT)
+    mask = bytearray(len(raw))
+    for k in range(4):
+        mask[k::4] = keep
+    clean = (int.from_bytes(raw, "big") & int.from_bytes(mask, "big")).to_bytes(len(raw), "big")
+    return clean.decode("utf-32-le" if little else "utf-32-be", errors="replace")
+
+
+def _wide_texts(value) -> list[str]:
+    """A blob's readings in the wide encodings (_WIDE), each from each starting byte within one character; [] for
+    anything else."""
+    if not isinstance(value, (bytes, memoryview)):
+        return []
+    raw, out = bytes(value), []
+    for encoding, width in _WIDE:
+        for start in range(width):
+            end = start + (len(raw) - start) // width * width
+            if end > start:
+                unit = raw[start:end]
+                out.append(_utf32(unit, encoding.endswith("le")) if width == 4
+                           else unit.decode(encoding, errors="replace"))
+    return out
+
+
+@functools.lru_cache(maxsize=8)
+def _noise(pattern: str) -> re.Pattern:
+    """Runs of characters that can't stand inside a match of the pattern, for a wide reading: a vector's is mostly
+    such characters (a float's top bytes read as ideographs and Hangul), and folding them all took 14 ms a vector. A
+    character of the Basic Multilingual Plane is one when it isn't printable ASCII (escapes and markup are written in
+    it), and what it folds to is something, holds no separator, and shares no character, nor a character of its
+    decomposition, with the pattern or the pattern's decomposition (so Hangul jamo and other parts of a composed letter
+    stay). Each run reads as one NUL, which no name holds; next to the name it reads as an edge, so a near-match there
+    reads as the name (the safe way: a trace)."""
+    codes = [c for c in range(1, 0x10000) if not 0xD800 <= c <= 0xDFFF]
+    folds = _fold_fast("\x00".join(map(chr, codes))).split("\x00")
+    if len(folds) != len(codes):                         # not expected: then only NUL is noise
+        return re.compile("\x00+")
+    name, sep = set(pattern) | set(unicodedata.normalize("NFKD", pattern)), re.compile(_SEP)
+    return re.compile(_class_of([0] + [c for c, f in zip(codes, folds) if f and not 0x20 <= c <= 0x7E
+                                       and not sep.search(f)
+                                       and not (set(f) | set(unicodedata.normalize("NFKD", f))) & name]).pattern
+                      + "+")
+
+
+def _readings(value, hit: re.Pattern, wide: bool = True) -> list[tuple[str, object]]:
+    """(text, fold) for each reading of a cell: _cell_text's, folded as text is (_fold), and unless wide is False the
+    wide ones, each run of _noise read as one NUL and folded in C (_fold_fast), since normalize() in Python takes
+    seconds a million characters."""
+    text = _cell_text(value)
+    noise = _noise(hit.pattern)
+    return ([(text, _fold)] if text else []) + [(noise.sub("\x00", t), _fold_fast)
+                                                for t in (_wide_texts(value) if wide else ())]
+
+
+def _vector_chunk_tables(con) -> set[str]:
+    """The tables of float vectors behind each vec0 index (sqlite-vec's NAME_vector_chunksNN), which the erase drops
+    and refills from the rows that remain."""
+    vec = _vec_tables(con)
+    return {t for t, _ in _tables(con) for v in vec if re.fullmatch(re.escape(v) + r"_vector_chunks\d+", t)}
+
+
 def _scan(con, hit: re.Pattern, loose: re.Pattern) -> tuple[list, list]:
     """Every text cell, in every table (a blob that may be text counts, _cell_text): (traces, nears). A trace is
     (table, column, key) for a cell that names the person; a near is (table, column, key, word, text) for each word in a
     cell that holds the name inside a longer word. Vectors are left to the byte check, which reads every byte of the
     database files."""
     traces, nears = [], []
+    chunks = _vector_chunk_tables(con)
     for table, cols in _tables(con):
         for key, rec in _rows(con, table):
             for c in cols:
-                text = _cell_text(rec.get(c))
-                if not text:
-                    continue
-                if _names_in(hit, text):
+                readings = _readings(rec.get(c), hit, wide=table not in chunks)
+                if any(_names_in(hit, text, fold=fold) for text, fold in readings):
                     traces.append((table, c, key))
-                nears += [(table, c, key, w, text) for w in _near_words(hit, loose, text)]
+                words: list[str] = []
+                for text, fold in readings:
+                    for w in _near_words(hit, loose, text, fold=fold):
+                        if w not in words:
+                            words.append(w)
+                            nears.append((table, c, key, w, text))
     return traces, nears
 
 
 def _traces(con, hit: re.Pattern) -> list[tuple[str, str, object]]:
-    """(table, column, key) for every text cell, in every table, that names the person (see _scan)."""
+    """(table, column, key) for every text cell, in every table, that names the person in any reading (see _scan)."""
+    chunks = _vector_chunk_tables(con)
     return [(t, c, k) for t, cols in _tables(con) for k, rec in _rows(con, t) for c in cols
-            if _names_in(hit, _cell_text(rec.get(c)))]
+            if any(_names_in(hit, text, fold=fold) for text, fold in _readings(rec.get(c), hit, wide=t not in chunks))]
 
 
 def _schema(con, hit: re.Pattern, loose: re.Pattern) -> tuple[list[dict], list]:

@@ -1190,3 +1190,73 @@ def test_a_file_outside_memory_with_only_a_near_match_is_listed(home):
     p = X.plan(PERSON)
     assert p.elsewhere == [] and p.elsewhere_near == [("approval-queue/20261101_000000_social.json", 1)]
     assert "approval-queue/20261101_000000_social.json (1 near-match(es))" in X.describe(p)
+
+
+# ---- round 4: text in a blob in UTF-16 or UTF-32 (2026-11-04 verifier, round 3: a false success) ------------------
+# Each encoding with and without its byte-order mark, and at an alignment a header byte moves it to. Before round 4 a
+# blob whose every fourth byte is NUL was read as float32 numbers, and an ASCII one as UTF-8 with NULs between letters.
+WIDE = [("utf-16-le", b""), ("utf-16-be", b""), ("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff"),
+        ("utf-32-le", b""), ("utf-32-be", b""), ("utf-32-le", b"\xff\xfe\x00\x00"), ("utf-32-be", b"\x00\x00\xfe\xff"),
+        ("utf-16-le", b"\x07"), ("utf-16-be", b"\x07"), ("utf-32-le", b"\x07\x07\x07"), ("utf-32-be", b"\x07")]
+WIDE_IDS = [f"{e}{'+' + h.hex() if h else ''}" for e, h in WIDE]
+WIDE_TEXTS = [("Marisol Quintero", "Call Marisol Quintero tomorrow."),               # ASCII: valid UTF-8 with NULs
+              ("Mar\u00eda L\u00f3pez", "Caf\u00e9 with Mar\u00eda L\u00f3pez, 10:30."),
+              ("\u041c\u0430\u0440\u0438\u044f \u041b\u043e\u043f\u0435\u0441",            # Cyrillic: no NUL at all
+               "\u0417\u0432\u043e\u043d\u043e\u043a: \u041c\u0430\u0440\u0438\u044f \u041b\u043e\u043f\u0435\u0441.")]
+
+
+@pytest.mark.parametrize("name,text", WIDE_TEXTS, ids=["ascii", "accented", "cyrillic"])
+@pytest.mark.parametrize("encoding,head", WIDE, ids=WIDE_IDS)
+def test_a_name_in_a_wide_text_blob_in_a_hand_added_table_is_refused(home, encoding, head, name, text):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store(f"{name} leads the tenant union.")
+    s.close()
+    con = raw_db(home)
+    con.execute("CREATE TABLE attachments (id TEXT PRIMARY KEY, body BLOB)")
+    con.execute("INSERT INTO attachments VALUES ('a1', ?)", (head + text.encode(encoding),))
+    con.commit()
+    con.close()
+    p = X.plan(name)
+    assert p.db_other == [{"table": "attachments", "column": "body", "rows": 1}], X.describe(p)
+    with pytest.raises(X.EraseError, match="Nothing was removed"):
+        X.erase(name, confirm=p.code, by="x", reason="asked")
+
+
+@pytest.mark.parametrize("encoding,head", WIDE, ids=WIDE_IDS)
+def test_a_name_in_a_wide_text_blob_on_a_memory_takes_the_memory(home, encoding, head):
+    """A hand-added column on memories is a column of the memory: the memory goes whole, and the bytes with it."""
+    from apolaki.agent import erase as X
+    name, text = WIDE_TEXTS[1]
+    s = open_store(home)
+    s.store(f"{name} leads the tenant union.")
+    kept = s.store("Unrelated note about the garden.")
+    s.close()
+    con = raw_db(home)
+    con.execute("ALTER TABLE memories ADD COLUMN attachment BLOB")
+    con.execute("UPDATE memories SET attachment = ? WHERE id = ?", (head + text.encode(encoding), kept))
+    con.commit()
+    con.close()
+    p = X.plan(name)
+    assert kept in [m["id"] for m in p.memories], X.describe(p)
+    X.erase(name, confirm=p.code, by="x", reason="asked")
+    raw = b"".join(f.read_bytes() for f in (home / "db").iterdir() if f.is_file())
+    assert name.encode(encoding) not in raw and "L\u00f3pez".encode(encoding) not in raw
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is True
+
+
+def test_every_blob_is_read_in_each_wide_encoding(home):
+    """_readings on its own: a vector (an embedding's float numbers) is read in them too; it holds the name or not."""
+    from apolaki.agent import erase as X
+    hit = X._matcher([PERSON])
+
+    def named(value, wide=True):
+        return any(X._names_in(hit, t, fold=f) for t, f in X._readings(value, hit, wide=wide))
+    vector = fake_embed("Brand voice: plain and warm.").tobytes()
+    assert X._is_vector(vector) and X._cell_text(vector) is None, "the setup lost its point"
+    assert len(X._readings(vector, hit)) == 12 and not named(vector)
+    for encoding, head in WIDE:
+        blob = head + "Call Marisol Quintero.".encode(encoding)
+        assert named(blob) and not named(blob, wide=False), (encoding, head)
+    assert [t for t, _ in X._readings("Marisol Quintero", hit)] == ["Marisol Quintero"] and X._readings(None, hit) == []

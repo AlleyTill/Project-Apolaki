@@ -47,7 +47,9 @@ may be joined by spaces, hyphens or dashes, apostrophes, full stops, underscores
 `(`, `)`, `/` and the like) or nothing ("Jean-Luc Moreau" also finds "Jean Luc Moreau", "JeanLuc Moreau" and
 "jean_luc_moreau"; "Marisol Quintero" finds "**Marisol** Quintero" and "Marisol/Quintero"); escaped text is read
 decoded (the store writes tags as JSON, so "L\u00f3pez" on disk is "López"), and markup is read taken out (a Markdown
-link "[Marisol](url) Quintero", HTML tags and entities, percent-encoding). A digit after the name is still the name
+link "[Marisol](url) Quintero", HTML tags and entities, percent-encoding). A blob (binary data in a column) is read as
+text too, in Latin-1, UTF-16 and UTF-32, either byte order, with a byte-order mark or without, unless it is one of the
+vector indexes' own chunks, which the erase drops and refills. A digit after the name is still the name
 ("marisol.quintero85@...", "@MarisolQuintero1990"). In scripts written without spaces (Chinese, Japanese, Thai and
 the like) and in Korean there is no word edge to keep, so a mention inside a sentence is found, and a character of
 those scripts next to a name in another script is a separator ("Quintero" with a Japanese honorific attached). An
