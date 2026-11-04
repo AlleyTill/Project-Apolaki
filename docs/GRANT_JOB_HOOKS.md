@@ -28,8 +28,10 @@ Some hold on their own once the package is installed; the others work only when 
 | for each call a model extracts from a page, before recording it | `admit_listing(KEY, call, kind="watchlist call")` | `None`: don't record it |
 | at the end of a run | `result["learning"]`, `result["watch"]` from each draft | report them in the summary |
 
-`admit_listing` screens every string in what it is given, at any depth (the applicant `types` list, nested dicts)
-and the dict keys, so pass everything a model will read from that listing in one call.
+`admit_listing` screens every string in what it is given, at any depth (the applicant `types` list, nested dicts),
+the dict keys, and the keys with their values (so an instruction split between a field name and its value is seen),
+each as it came and, for HTML, as a reader sees it; so pass everything a model will read from that listing in one
+call.
 
 Count what was quarantined in the run's summary, so the screen's work shows the same way the other gates do.
 

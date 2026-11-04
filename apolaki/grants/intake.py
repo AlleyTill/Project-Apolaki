@@ -21,19 +21,22 @@ from __future__ import annotations
 from .. import intake
 
 
-def _strings(value, values: list, keys: list) -> None:
-    """Every string in a JSON-shaped value, at any depth and in order: values into values, dict keys into keys."""
+def _strings(value, values: list, keys: list, both: list) -> None:
+    """Every string in a JSON-shaped value, at any depth and in order: values into values, dict keys into keys, and
+    both, each key before its value, into both."""
     if isinstance(value, str):
         if value.strip():
             values.append(value)
+            both.append(value)
     elif isinstance(value, dict):
         for k, v in value.items():
             if isinstance(k, str) and k.strip():
                 keys.append(k)
-            _strings(v, values, keys)
+                both.append(k)
+            _strings(v, values, keys, both)
     elif isinstance(value, (list, tuple)):
         for v in value:
-            _strings(v, values, keys)
+            _strings(v, values, keys, both)
     elif value is not None and not isinstance(value, (bool, int, float)):
         raise TypeError(f"admit_listing takes JSON-shaped data (strings, numbers, lists, dicts), not "
                         f"{type(value).__name__}: decode it to text first, so the screen can read it")
@@ -48,14 +51,22 @@ def admit_listing(key: str, listing: dict, kind: str = "grants.gov listing") -> 
     whole, and an instruction split across two fields or list items ("...ignore all previous" / "instructions
     and...") is seen whole; the whole is what a person reads in the quarantine (a flat listing's is its fields
     joined, as before, so a release made before still holds). The dict keys are screened too, as a second text
-    (kind "... (field names)"): a call a model extracted is JSON the model chose, keys included. Numbers, booleans and
-    None carry no text; any other type is refused (TypeError) rather than skipped unread."""
+    (kind "... (field names)"): a call a model extracted is JSON the model chose, keys included. And the keys with
+    their values, each key before its value, as a third (kind "... (field names with values)"), so an instruction split
+    between a field name and its value ({"Ignore all previous": "instructions and..."}) is seen whole; that text is
+    screened only when it shows a pattern the other two don't, so it adds no second alarm for one already raised and a
+    listing released before is still admitted. Numbers, booleans and None carry no text; any other type is refused
+    (TypeError) rather than skipped unread."""
     values: list[str] = []
     keys: list[str] = []
-    _strings(listing, values, keys)
-    ok = intake.screen("\n".join(values), source=key, kind=kind).ok
+    both: list[str] = []
+    _strings(listing, values, keys, both)
+    text, names, whole = "\n".join(values), "\n".join(keys), "\n".join(both)
+    ok = intake.screen(text, source=key, kind=kind).ok
     if keys:
-        ok = intake.screen("\n".join(keys), source=key, kind=f"{kind} (field names)").ok and ok
+        ok = intake.screen(names, source=key, kind=f"{kind} (field names)").ok and ok
+        if set(intake.scan(whole)) - set(intake.scan(text)) - set(intake.scan(names)):
+            ok = intake.screen(whole, source=key, kind=f"{kind} (field names with values)").ok and ok
     return listing if ok else None
 
 

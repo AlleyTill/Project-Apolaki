@@ -7,7 +7,10 @@
 screen(text, source, kind) runs Garuda's Layer 1 (vendored in apolaki/security/garuda: 32 patterns for known
 injection phrasings, chat-template tokens and authority spoofing) on the text as it came and on its normalised form
 (apolaki.security.normalize: invisible characters removed, look-alike letters folded), so "Ig<zero-width
-space>nore previous instructions" is caught as well.
+space>nore previous instructions" is caught as well. When the text has HTML in it (Grants.gov synopses do), it is also
+tasted as a reader sees it: comments and tags taken out, once as nothing ("Ig<b>nore</b>") and once as a space
+("previous<br>instructions"), then entities decoded ("Ignore&nbsp;all"), each as it is and normalised. The raw text
+is still tasted, so a chat-template token a reader's view would take out as a tag is caught there.
   - A hit quarantines the text for a person: $APOLAKI_HOME/quarantine/q_<sha256 prefix>.json holds the text, its
     sources, its kind, the patterns that fired and when it was seen. The same text seen again is the same entry
     (seen_count, sources), so a listing re-read every night doesn't raise a new alarm each time. Each event is a line
@@ -37,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import logging
 import re
@@ -85,15 +89,38 @@ def _log(event: str, qid: str, kind: str, source: str, flags: list[str]) -> None
                            ensure_ascii=False) + "\n")
 
 
+# HTML a reader doesn't see: a comment (to its end, or to the end of the text when it is left open), and a tag (one
+# that starts with a letter, "/", "!" or "?": "<|im_start|>" is no tag, and stays in the reader's view).
+_HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
+_HTML_TAG = re.compile(r"</?[A-Za-z!?][^<>]*>")
+
+
+def as_read(text: str) -> list[str]:
+    """The text as a reader of its HTML sees it: comments and tags taken out, as nothing and as a space (an inline tag
+    joins a word, a line break or a paragraph separates two), then HTML entities decoded. [] when that changes
+    nothing. Tags go before entities are decoded, as a browser reads them: "&lt;b&gt;" is text, not a tag."""
+    if "<" not in text and "&" not in text:
+        return []
+    out = []
+    for gap in ("", " "):
+        seen = html.unescape(_HTML_TAG.sub(gap, _HTML_COMMENT.sub(gap, text)))
+        if seen != text and seen not in out:
+            out.append(seen)
+    return out
+
+
 def scan(text: str) -> list[str]:
-    """Garuda Layer 1's patterns that fire on the text or on its normalised form, in pattern order."""
+    """Garuda Layer 1's patterns that fire on the text, on its normalised form, or on what a reader of its HTML sees
+    (as_read, as it is and normalised), in the order found."""
     if not text:
         return []
     # The raw scan is kept so the screen never rests on normalize() alone. No text is known that it catches and the
-    # normalised scan misses, so a mutant that drops it lives; that is why.
-    raw = layer1(text)
-    folded = layer1(normalize(text))
-    return raw + [p for p in folded if p not in raw]
+    # normalised scan misses, so a mutant that drops it lives; that is why. The text as it came (raw and normalised)
+    # is what catches a tag-shaped injection such as "<system>", which the reader's view takes out.
+    flags = layer1(text)
+    for t in (normalize(text), *(v for seen in as_read(text) for v in (seen, normalize(seen)))):
+        flags += [p for p in layer1(t) if p not in flags]
+    return flags
 
 
 def screen(text: str, source: str, kind: str) -> Screened:

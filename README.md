@@ -53,7 +53,8 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   calls a model extracts from them, and `apolaki.intake.screen_discord` is there for Discord input. A hit is
   quarantined in `$APOLAKI_HOME/quarantine/` for a person and logged, and goes nowhere else;
   `python -m apolaki.intake list|show|release` is how a person reads it and, if it is harmless, lets that exact text
-  through. Layer 1 is a list of known phrasings: a paraphrase gets past it, and research that only discusses
+  through. HTML (Grants.gov synopses come as HTML) is screened as a reader sees it, tags out and entities decoded, as
+  well as as it came. Layer 1 is a list of known phrasings: a paraphrase gets past it, and research that only discusses
   injection is held like an attack until a person releases it. Garuda's second layer, a model judge, isn't vendored.
 - **An approval queue.** Nothing is published by Apolaki. Every draft lands in the queue with its ethics verdict,
   its lint results and the sha256 of its text, and a person approves it. An approval is of that exact text: if the
