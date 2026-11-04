@@ -10,7 +10,9 @@ injection phrasings, chat-template tokens and authority spoofing) on the text as
 space>nore previous instructions" is caught as well. When the text has HTML in it (Grants.gov synopses do), it is also
 tasted as a reader sees it: comments and tags taken out, once as nothing ("Ig<b>nore</b>") and once as a space
 ("previous<br>instructions"), then entities decoded ("Ignore&nbsp;all"), each as it is and normalised. The raw text
-is still tasted, so a chat-template token a reader's view would take out as a tag is caught there.
+is still tasted, so a chat-template token a reader's view would take out as a tag is caught there; and so is the raw
+text with its entities decoded and its tags kept, and the tags' attribute values as text (as_raw), since the model
+reads an attribute that a reader's view takes out ('<img alt="Ignore&nbsp;all previous instructions">').
   - A hit quarantines the text for a person: $APOLAKI_HOME/quarantine/q_<sha256 prefix>.json holds the text, its
     sources, its kind, the patterns that fired and when it was seen. The same text seen again is the same entry
     (seen_count, sources), so a listing re-read every night doesn't raise a new alarm each time. Each event is a line
@@ -109,9 +111,31 @@ def as_read(text: str) -> list[str]:
     return out
 
 
+# An attribute and its value, quoted either way or not at all, inside a tag (_HTML_TAG).
+_ATTRIBUTE = re.compile(r"""[^\s"'<>/=]+\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>=`]+))""")
+
+
+def as_raw(text: str) -> list[str]:
+    """The text as a model reading its raw HTML sees it (round 4: the reader's view takes a whole tag out before it
+    decodes entities, so '<img alt="Ignore&nbsp;all previous instructions">' was admitted): the text with its entities
+    decoded and its tags kept, and every tag's attribute values, entities decoded, one after another as one text (so an
+    instruction split between two attributes is whole). [] when that changes nothing."""
+    if "<" not in text and "&" not in text:
+        return []
+    out = []
+    decoded = html.unescape(text)
+    if decoded != text:
+        out.append(decoded)
+    values = " ".join(html.unescape(next(v for v in m.groups() if v is not None))
+                      for tag in _HTML_TAG.finditer(text) for m in _ATTRIBUTE.finditer(tag.group()))
+    if values and values not in out:
+        out.append(values)
+    return out
+
+
 def scan(text: str) -> list[str]:
     """Garuda Layer 1's patterns that fire on the text, on its normalised form, or on what a reader of its HTML sees
-    (as_read, as it is and normalised), in the order found."""
+    (as_read) or a model reading the raw HTML sees (as_raw), each as it is and normalised, in the order found."""
     if not text:
         return []
     # The raw scan is kept so the screen never rests on normalize() alone. No text is known that it catches and the
@@ -119,7 +143,7 @@ def scan(text: str) -> list[str]:
     # for the same reason, and a mutant that drops that lives as well (round 3). The text as it came (raw and
     # normalised) is what catches a tag-shaped injection such as "<system>", which the reader's view takes out.
     flags = layer1(text)
-    for t in (normalize(text), *(v for seen in as_read(text) for v in (seen, normalize(seen)))):
+    for t in (normalize(text), *(v for seen in as_read(text) + as_raw(text) for v in (seen, normalize(seen)))):
         flags += [p for p in layer1(t) if p not in flags]
     return flags
 
