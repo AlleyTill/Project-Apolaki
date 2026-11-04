@@ -319,7 +319,10 @@ def test_the_check_finds_an_erased_embedding_left_in_the_database(home):
 
 
 @pytest.mark.parametrize("probe", ["MAR\u00cdA L\u00d3PEZ", "Mari\u200bsol Quintero", "\uff2d\uff41risol Quintero",
-                                   "\u041carisol Quintero", "O\u2019Brien", "O`Brien", "\U000e0041\U000e0042 tag"])
+                                   "\u041carisol Quintero", "O\u2019Brien", "O`Brien", "\U000e0041\U000e0042 tag",
+                                   # round 3: Thai marks, Hangul (NFKD splits it), astral format and mark characters
+                                   "\u0e2a\u0e21\u0e28\u0e31\u0e01\u0e14\u0e34\u0e4c", "\uae40\ubbfc\uc218 \uc528",
+                                   "Mari\U000110bdsol Quintero", "Mari\U0001d167sol Quintero"])
 def test_the_byte_fold_reads_like_the_full_fold(probe):
     """The check of the database bytes uses a fast fold; on the disguises it covers it must read what plan() reads."""
     from apolaki.agent import erase as X
@@ -348,11 +351,12 @@ def test_a_longer_name_that_only_starts_with_theirs_is_not_them(home):
 
 
 def test_the_full_fold_catches_what_the_byte_fold_cant(home):
-    """A format character the fast byte fold doesn't know (U+110BD, Kaithi number sign) hides the name from the byte
-    check; the checks with the full fold (every column of every table, and the second dry run) still find it."""
+    """The byte check reads the bytes with a fast fold and escapes decoded, not with markup taken out: a Markdown link
+    between the parts of the name hides it from the byte check; the checks of the rows (every column of every table,
+    and the second dry run) still find it."""
     from apolaki.agent import erase as X
     s = open_store(home)
-    s.store("Mari\U000110bdsol Quintero signed up to volunteer.")
+    s.store("Thanks to [Marisol](https://x.example) Quintero for hosting.")
     s.close()
     found = X.leftovers([PERSON], home)
     assert not [f for f in found if f.endswith("apolaki.db: the name")], found      # the byte check misses it
@@ -448,7 +452,7 @@ def test_no_deleted_bytes_stay_where_sqlite_doesnt_zero_them_by_default(home, mo
 def test_an_erase_whose_check_finds_the_name_is_an_error_not_a_success(home, monkeypatch):
     from apolaki.agent import erase as X
     plant(home)
-    monkeypatch.setattr(X, "leftovers", lambda names, home, blobs=(): ["somewhere: the name"])
+    monkeypatch.setattr(X, "leftovers", lambda names, home, blobs=(), others=(): ["somewhere: the name"])
     with pytest.raises(X.EraseIncomplete, match="check still reads"):
         X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
     [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
@@ -461,7 +465,7 @@ def test_the_cli_says_an_erase_is_incomplete_and_exits_1_and_a_refusal_exits_2(h
     plant(home)
     assert E.main(["erase-person", PERSON, "--confirm", "000000000000", "--by", "x", "--reason", "asked"]) == 2
     assert "not erased" in capsys.readouterr().err
-    monkeypatch.setattr(X, "leftovers", lambda names, home, blobs=(): ["somewhere: the name"])
+    monkeypatch.setattr(X, "leftovers", lambda names, home, blobs=(), others=(): ["somewhere: the name"])
     assert E.main(["erase-person", PERSON, "--confirm", X.plan(PERSON).code, "--by", "x", "--reason", "asked"]) == 1
     assert "ERASE INCOMPLETE" in capsys.readouterr().err
 
@@ -657,18 +661,18 @@ def test_the_byte_check_finds_a_deleted_name_wherever_it_starts_and_however_it_i
     assert any(f.endswith("apolaki.db: the name") for f in found), found
 
 
-def test_a_kept_longer_word_that_contains_the_name_is_not_taken_for_it(home):
-    """The byte check has no word edges (bytes around a column value are anything), so a kept "Quinterova" would read
-    as the name; it is told apart by the kept rows."""
+def test_a_kept_longer_word_ruled_someone_else_is_not_taken_for_the_name(home):
+    """The byte check has no word edges (bytes around a column value are anything), so a kept "Quinterova" reads as the
+    name there; once a person has ruled it someone else, the kept row explains those bytes."""
     from apolaki.agent import erase as X
     plant(home)
     s = open_store(home)
     other = s.store("Marisol Quinterova runs the choir.")
     s.close()
     try:
-        X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
+        X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked", not_them=("Marisol Quinterova",))
     except X.EraseError as e:
-        pytest.fail(f"a kept longer name was taken for hers: {e}")
+        pytest.fail(f"a kept longer name, ruled someone else, was taken for hers: {e}")
     assert other in {r[0] for r in db_rows(home, "SELECT id FROM memories")}
 
 
@@ -740,23 +744,6 @@ def test_a_table_without_rowids_is_read_too(home):
     except Exception as e:                       # noqa: BLE001 - a crash is a failure of the read, said as one
         pytest.fail(f"a table without rowids broke the dry run: {e!r}")
     assert p.db_other == [{"table": "notes_by_name", "column": "name", "rows": 1}]
-
-
-def test_a_chance_match_inside_a_kept_vector_is_not_taken_for_the_name(home):
-    """Float vectors hold a short name's bytes now and then (three letters turn up in megabytes of floats); a kept
-    embedding whose bytes spell the name is kept data, not a trace."""
-    from apolaki.agent import erase as X
-    plant(home)
-    vector = bytearray(fake_embed("Brand voice: plain and warm.").tobytes())
-    vector[100:100 + 18] = b"\x81Marisol Quintero\x82"         # the name's bytes inside a vector, in no text cell
-    con = raw_db(home)
-    con.execute("UPDATE memories SET embedding = ? WHERE content = 'Brand voice: plain and warm.'", (bytes(vector),))
-    con.commit()
-    con.close()
-    try:
-        X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
-    except X.EraseError as e:
-        pytest.fail(f"a kept vector's bytes were taken for her name: {e}")
 
 
 @pytest.mark.parametrize("written", ["Jean Luc Moreau", "Jean-Luc Moreau", "Jean\u2013Luc Moreau", "JeanLuc Moreau",
@@ -906,3 +893,269 @@ def test_the_mcp_server_has_no_erase_tool():
     from apolaki.agent import mcp_server as M
     assert not [t["name"] for t in M.TOOLS if "erase" in t["name"] or "delete" in t["name"]]
     assert "Unknown tool" in M.handle_tool("apolaki_erase_person", {"name": PERSON})
+
+
+# ---- round 3 (2026-11-03 verifier, round 2): a name touching a letter, a digit or markup; near-matches ruled on
+# Each text names the person through the real store() path; before round 3 each erased "successfully" and left it.
+TOUCHING = [
+    ("\u4eca\u5929\u738b\u5c0f\u660e\u6765\u4e86\u56fe\u4e66\u9986\u3002", "\u738b\u5c0f\u660e", "\u738b\u5c0f\u660e"),
+    ("\u0e27\u0e31\u0e19\u0e19\u0e35\u0e49\u0e2a\u0e21\u0e0a\u0e32\u0e22\u0e21\u0e32\u0e17\u0e35\u0e48\u0e2b\u0e49"
+     "\u0e2d\u0e07\u0e2a\u0e21\u0e38\u0e14", "\u0e2a\u0e21\u0e0a\u0e32\u0e22", "\u0e2a\u0e21\u0e0a\u0e32\u0e22"),
+    # "We met with Karim Mansour today" (an invented name): the preposition bi is written joined to the name
+    ("\u0627\u0644\u062a\u0642\u064a\u0646\u0627 \u0628\u0643\u0631\u064a\u0645 \u0645\u0646\u0635\u0648\u0631 "
+     "\u0627\u0644\u064a\u0648\u0645",
+     "\u0643\u0631\u064a\u0645 \u0645\u0646\u0635\u0648\u0631",
+     "\u0643\u0631\u064a\u0645 \u0645\u0646\u0635\u0648\u0631"),
+    ("Marisol Quintero\u3055\u3093\u304c\u6765\u307e\u3057\u305f\u3002", PERSON, "Quintero"),
+    ("Write to marisol.quintero85@example.org about the lease.", PERSON, "quintero85"),
+    ("Follow @MarisolQuintero1990 for updates.", PERSON, "Quintero1990"),
+    ("File marisolquintero2.pdf is attached.", PERSON, "quintero2"),
+    ("Thanks to **Marisol** Quintero for hosting.", PERSON, "Quintero"),
+    ("Thanks to [Marisol](https://x.example) Quintero.", PERSON, "Quintero"),
+    ("Contact: Marisol/Quintero", PERSON, "Quintero"),
+    ("Mar&iacute;a L&oacute;pez called.", MARIA, "pez"),
+]
+
+
+@pytest.mark.parametrize("text,name,probe", TOUCHING, ids=["chinese", "thai", "arabic prefix", "japanese honorific",
+                                                            "email with digits", "handle with year", "file with digit",
+                                                            "markdown emphasis", "markdown link", "slash",
+                                                            "html entities"])
+def test_a_name_touching_a_letter_a_digit_or_markup_is_found_and_erased(home, text, name, probe):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    mid = s.store(text)
+    kept = s.store("Brand voice: plain and warm.")
+    s.close()
+    p = X.plan(name)
+    assert [m["id"] for m in p.memories] == [mid], X.describe(p)
+    try:
+        X.erase(name, confirm=p.code, by="the data lead", reason="asked to be removed")
+    except X.EraseError as e:
+        pytest.fail(f"the erase didn't complete: {e}")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+    assert not [r for r in db_rows(home, "SELECT content FROM memories") if probe.lower() in r[0].lower()]
+
+
+QUINTEROVA = "Marisol Quinterova runs the choir."
+
+
+def test_a_near_match_is_listed_and_the_erase_refuses_until_a_person_rules_on_it(home):
+    """The name inside a longer word in a kept row: the dry run lists it, and the erase removes nothing until a person
+    names it as someone else."""
+    from apolaki.agent import erase as X
+    plant(home)
+    s = open_store(home)
+    other = s.store(QUINTEROVA)
+    s.close()
+    p = X.plan(PERSON)
+    assert [n["word"] for n in p.near] == ["marisol quinterova"]
+    assert p.near[0]["place"] == {"table": "memories", "column": "content", "row": other}
+    text = X.describe(p)
+    assert "marisol quinterova" in text and "--not-them" in text and other[:8] in text
+    before = snapshot(home)
+    with pytest.raises(X.EraseError, match="near-match") as e:
+        X.erase(PERSON, confirm=p.code, by="the data lead", reason="asked to be removed")
+    assert "Nothing was removed" in str(e.value) and snapshot(home) == before
+    assert not (home / "erasures.jsonl").exists()
+    try:
+        X.erase(PERSON, confirm=p.code, by="the data lead", reason="asked to be removed",
+                not_them=("Marisol Quinterova",))
+    except X.EraseError as e:
+        pytest.fail(f"the erase didn't complete with the near-match ruled on: {e}")
+    assert other in {r[0] for r in db_rows(home, "SELECT id FROM memories")}
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is True
+    assert rec["near_matches"] == [{"place": {"table": "memories", "column": "content", "row": other},
+                                    "ruling": "someone else"}]
+    assert "arisol" not in json.dumps(rec).lower() and "quinter" not in json.dumps(rec).lower()
+
+
+@pytest.mark.parametrize("not_them,match", [
+    ((), "near-match"),
+    (("Marisol Quinterova", "Marisol Quinteros"), "didn't list"),
+    (("Quinterova",), "near-match"),
+], ids=["none", "one too many", "a different word"])
+def test_a_ruling_must_name_exactly_the_near_matches(home, not_them, match):
+    from apolaki.agent import erase as X
+    plant(home)
+    s = open_store(home)
+    s.store(QUINTEROVA)
+    s.close()
+    before = snapshot(home)
+    with pytest.raises(X.EraseError, match=match):
+        X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked", not_them=not_them)
+    assert snapshot(home) == before
+
+
+def test_the_byte_check_accepts_a_no_edge_match_only_where_a_ruled_near_match_stands(home):
+    """Before round 3 the byte check took any longer word a kept row holds for someone else, and so accepted
+    "Quintero\u3055\u3093" and "MarisolQuintero1990" because a kept row held them."""
+    from apolaki.agent import erase as X
+    open_store(home).close()
+    con = raw_db(home)                  # as SQL: the test's fake entity finder would take "Marisol Quintero" from it
+    con.execute("INSERT INTO memories (id, content, created_at) VALUES ('other', ?, '2026-01-01')", (QUINTEROVA,))
+    con.commit()
+    con.close()
+    found = X.leftovers([PERSON], home)
+    assert any(f.endswith("apolaki.db: the name") for f in found), found
+    assert any("near-match nobody ruled on" in f for f in found), found
+    assert X.leftovers([PERSON], home, others=("Marisol Quinterova",)) == []
+
+
+def test_a_deleted_near_match_left_in_free_pages_is_a_trace(home, monkeypatch):
+    """A longer word that no kept row holds explains nothing: deleted bytes left by an earlier delete are a trace."""
+    from apolaki.agent import erase as X
+    no_vec(monkeypatch)
+    open_store(home).close()
+    con = raw_db(home, secure_delete=False)
+    con.execute("INSERT INTO memories (id, content, created_at) VALUES ('gone', ?, '2026-01-01')", (QUINTEROVA,))
+    con.commit()
+    con.execute("DELETE FROM memories WHERE id = 'gone'")
+    con.commit()
+    con.close()
+    assert b"Quinterova" in (home / "db" / "apolaki.db").read_bytes(), "the setup lost its point"
+    found = X.leftovers([PERSON], home, others=("Marisol Quinterova",))
+    assert any(f.endswith("apolaki.db: the name") for f in found), found
+
+
+@pytest.mark.parametrize("where,setup", [
+    ("belief", lambda home: (home / "engine_beliefs.json").write_text(json.dumps(
+        [{"id": "b9", "content": "Reviewers liked the note on " + QUINTEROVA}]))),
+    ("belief log", lambda home: (home / "engine_beliefs_log.jsonl").write_text(json.dumps(
+        {"kind": "added", "id": "b9", "content": QUINTEROVA}) + "\n")),
+    ("wiki file", lambda home: (home / "wiki" / "choir.md").write_text("# Choir\n" + QUINTEROVA + "\n")),
+])
+def test_a_near_match_in_a_kept_file_needs_a_ruling_too(home, where, setup):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store("Marisol Quintero leads the tenant union.")
+    s.close()
+    (home / "wiki").mkdir(exist_ok=True)
+    setup(home)
+    p = X.plan(PERSON)
+    assert [n["word"] for n in p.near] == ["marisol quinterova"], X.describe(p)
+    with pytest.raises(X.EraseError, match="near-match"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    try:
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked", not_them=("marisol quinterova",))
+    except X.EraseError as e:
+        pytest.fail(f"the erase didn't complete with the near-match ruled on: {e}")
+    assert X.leftovers([PERSON], home) and X.leftovers([PERSON], home, others=("marisol quinterova",)) == []
+
+
+def test_a_ledger_place_that_names_the_person_is_recorded_without_it(home):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store("Marisol Quintero leads the tenant union.")
+    s.close()
+    con = raw_db(home)
+    con.execute("CREATE TABLE handles (id TEXT PRIMARY KEY, note TEXT)")
+    con.execute("INSERT INTO handles VALUES ('marisolquinterova', 'the choir lead')")
+    con.commit()
+    con.close()
+    p = X.plan(PERSON)
+    assert [n["place"] for n in p.near] == [{"table": "handles", "column": "id", "row": "marisolquinterova"}]
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked", not_them=("marisolquinterova",))
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["near_matches"] == [{"place": {"table": "handles", "column": "id", "row": "[erased]"},
+                                    "ruling": "someone else"}]
+
+
+@pytest.mark.parametrize("ddl,kind", [
+    ("CREATE TABLE notes_marisol_quintero (x TEXT)", "table"),
+    ("CREATE VIEW v AS SELECT 'Marisol Quintero' AS who", "view"),
+    ("CREATE TRIGGER t AFTER INSERT ON memories WHEN new.content LIKE '%Marisol Quintero%' BEGIN SELECT 1; END",
+     "trigger"),
+    ("CREATE TABLE extra (who TEXT DEFAULT 'Marisol Quintero')", "table"),
+    ("CREATE INDEX idx_marisol_quintero ON memories(content)", "index"),
+], ids=["table name", "view", "trigger", "column default", "index name"])
+def test_a_schema_object_naming_the_person_stops_the_erase_before_anything_changes(home, ddl, kind):
+    from apolaki.agent import erase as X
+    plant(home)
+    con = raw_db(home)
+    con.execute(ddl)
+    con.commit()
+    con.close()
+    p = X.plan(PERSON)
+    assert [s["type"] for s in p.schema] == [kind]
+    assert "schema" in X.describe(p) and "WILL REFUSE" in X.describe(p)
+    before = snapshot(home)
+    with pytest.raises(X.EraseError, match="Nothing was removed"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert snapshot(home) == before
+
+
+def test_a_kept_blob_of_text_that_isnt_utf8_is_read_as_text(home):
+    """Only a blob that reads as an embedding's float numbers is skipped as numbers; text in another encoding isn't
+    one, so the name in it is found (before round 3 the byte check took it for a chance match in a vector)."""
+    from apolaki.agent import erase as X
+    plant(home)
+    con = raw_db(home)
+    con.execute("CREATE TABLE campaign_notes (id TEXT PRIMARY KEY, body BLOB)")
+    con.execute("INSERT INTO campaign_notes VALUES ('n1', ?)",
+                ("Caf\u00e9 meeting with Marisol Quintero, cr\u00e8me br\u00fbl\u00e9e.".encode("latin-1"),))
+    con.commit()
+    con.close()
+    p = X.plan(PERSON)
+    assert p.db_other == [{"table": "campaign_notes", "column": "body", "rows": 1}]
+    with pytest.raises(X.EraseError, match="Nothing was removed"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+
+
+def test_a_real_chance_match_inside_a_kept_vector_is_not_taken_for_the_name(home):
+    """A short name's letters can stand in the low bytes of a float an embedding holds (each component is under 1, so
+    its top byte is no letter). A kept vector whose bytes spell the name that way is numbers, not a trace."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store("Lia called about the venue.")
+    kept = s.store("Brand voice: plain and warm.")
+    s.close()
+    vector = bytearray(fake_embed("Brand voice: plain and warm.").tobytes())
+    vector[100:104] = b"Lia\x3e"                 # one float32, about 0.2, whose low three bytes spell the name
+    con = raw_db(home)
+    con.execute("UPDATE memories SET embedding = ? WHERE id = ?", (bytes(vector), kept))
+    con.commit()
+    con.close()
+    from apolaki.agent.erase import _is_vector
+    assert _is_vector(bytes(vector)), "the setup lost its point: the vector no longer reads as numbers"
+    try:
+        X.erase("Lia", confirm=X.plan("Lia").code, by="x", reason="asked")
+    except X.EraseError as e:
+        pytest.fail(f"a kept vector's bytes were taken for her name: {e}")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+
+
+def test_the_cli_takes_a_ruling_on_each_near_match(home, capsys):
+    import apolaki.engine as E
+    plant(home)
+    s = open_store(home)
+    s.store(QUINTEROVA)
+    s.close()
+    assert E.main(["erase-person", PERSON]) == 0
+    out = capsys.readouterr().out
+    code = re.search(r"--confirm (\w{12})", out).group(1)
+    assert "Near-match" in out and "--not-them 'marisol quinterova'" in out
+    assert E.main(["erase-person", PERSON, "--confirm", code, "--by", "x", "--reason", "asked"]) == 2
+    assert "near-match" in capsys.readouterr().err
+    assert E.main(["erase-person", PERSON, "--confirm", code, "--by", "x", "--reason", "asked",
+                   "--not-them", "Marisol Quinterova"]) == 0
+    assert "1 near-match" in capsys.readouterr().out
+
+
+def test_a_dict_key_naming_the_person_is_redacted_in_the_belief_log(home):
+    """_redact's key branch on its own: a key that names her becomes "[erased]", its value stays when it doesn't."""
+    from apolaki.agent import erase as X
+    hit = X._matcher([PERSON])
+    assert X._redact({"Marisol Quintero": "quote exactly", "kind": "added"}, hit) == {"[erased]": "quote exactly",
+                                                                                     "kind": "added"}
+    plant(home)
+    with (home / "engine_beliefs_log.jsonl").open("a") as f:
+        f.write(json.dumps({"day": "2026-11-02", "kind": "added", "notes": {"Marisol Quintero": "quote exactly"}})
+                + "\n")
+    try:
+        X.erase(PERSON, confirm=X.plan(PERSON).code, by="x", reason="asked")
+    except X.EraseError as e:
+        pytest.fail(f"the erase left the name in a belief-log key: {e}")
+    last = json.loads((home / "engine_beliefs_log.jsonl").read_text().splitlines()[2])
+    assert last["notes"] == {"[erased]": "quote exactly"}

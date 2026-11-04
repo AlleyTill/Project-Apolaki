@@ -1,8 +1,9 @@
 """Erase a person from Apolaki's memory, everywhere it lives (2026-11-02 review, item 14 and adoption 9).
 
     python -m apolaki.engine erase-person "NAME" [--alias "OTHER NAME" ...]
-        a dry run: lists everything it would remove, and gives a code
-    python -m apolaki.engine erase-person "NAME" [--alias ...] --confirm CODE --by WHO --reason WHY
+        a dry run: lists everything it would remove, every near-match it would keep, and gives a code
+    python -m apolaki.engine erase-person "NAME" [--alias ...] --confirm CODE --by WHO --reason WHY \\
+        [--not-them WORD ...]
         removes exactly what that dry run listed
 
 Apolaki's memory keeps things by design: archive_memory() hides a memory but keeps its row and its embedding, and
@@ -13,18 +14,34 @@ path that deletes. It is a command a person runs; the MCP server has no erase to
 What counts as the name, for the name and each alias:
   - case, accents, look-alike letters, curly quotes and invisible characters are folded (apolaki.security.normalize),
     so "María López" also finds "MARIA LOPEZ";
-  - the parts of a name are the pieces between spaces, hyphens and dashes, apostrophes, full stops and underscores,
-    and in the text any run of those, or nothing, may stand between two parts: "Jean-Luc Moreau" finds "Jean Luc
-    Moreau", "Jean–Luc Moreau" (an en dash), "JeanLuc Moreau", "jean_luc_moreau" (a wiki file name) and
-    "jean.luc.moreau"; "O'Brien" finds "OBrien" and "O Brien";
-  - a match must not touch a letter or a digit on either side, so "Marisol Quinterova" and "Jean-Lucien" are other
-    people;
-  - text is read as stored and also with its escapes decoded (\\u00f3, \\U..., \\x.., \\n and the like, any number of
-    backslashes deep), since store() writes tags with json.dumps, which escapes every non-ASCII letter.
+  - the parts of a name are the pieces between spaces, hyphens and dashes, apostrophes, full stops, underscores and
+    markup characters (* [ ] ( ) { } < > / \\ | # ~ ^ = +), and in the text any run of those, or nothing, may stand
+    between two parts: "Jean-Luc Moreau" finds "Jean Luc Moreau", "Jean–Luc Moreau" (an en dash), "JeanLuc Moreau",
+    "jean_luc_moreau" (a wiki file name) and "jean.luc.moreau"; "O'Brien" finds "OBrien" and "O Brien"; "Marisol
+    Quintero" finds "**Marisol** Quintero" and "Marisol/Quintero";
+  - a match must not touch a letter or a digit of a script written with spaces before it, nor such a letter after it.
+    A digit after the name is still the name ("marisol.quintero85@...", "@MarisolQuintero1990"). A character of a
+    script written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Myanmar, Tibetan, Yi) or of Korean, whose
+    particles attach to a name, is a separator ("Marisol Quintero" + a Japanese honorific), and a name written in one
+    of those scripts keeps no word edge at all, since a mention inside a sentence touches letters on both sides. An
+    Arabic name may carry an attached prefix (wa, fa, bi, li, ka, al, and their combinations: "with Muhammad");
+  - text is read as stored, with its escapes decoded (\\u00f3, \\U..., \\x.., \\n and the like, any number of
+    backslashes deep, since store() writes tags with json.dumps, which escapes every non-ASCII letter), and with its
+    markup taken out: a Markdown link or image ("[Marisol](url) Quintero"), an HTML tag, an HTML entity
+    ("Mar&iacute;a") and percent-encoding.
+A near-match is the name inside a longer word: what the pattern finds without the word edges that it doesn't find
+with them ("Marisol Quinterova", "xMarisol Quintero"). It may be another person, or her. The dry run lists every
+near-match in what the erase keeps (any column of any kept row, the schema, kept wiki pages, kept beliefs, what the
+belief log's redaction leaves), and the erase refuses until a person rules on each word: someone else (--not-them
+WORD, which names it exactly as the dry run prints it), or the person (give it as an --alias and dry-run again, and it
+is erased). The ledger records each ruled near-match by where it is, with the ruling, never by the word, which holds
+the name.
 
 What it removes:
   - every memory with a column that names the person (text, tags, source, archive_reason, any column), archived ones
-    included, each with its embedding (the row's blob and its vector-index entry);
+    included, each with its embedding (the row's blob and its vector-index entry). A blob counts as text unless it
+    reads as an embedding's float numbers (all under 128; text in another encoding doesn't), so a name in a blob of
+    Latin-1 text is found;
   - the person's entity rows (an entity whose name contains the person's, such as "Dr. María López", counts), every
     mention row and triple that names them or touches them or an erased memory, and every other entity left with no
     memory behind it, since it came only from what was erased;
@@ -32,30 +49,35 @@ What it removes:
     rebuilt from what remains or removed when nothing remains to rebuild it from;
   - the engine's beliefs that name the person, logged as removed without the name; and the person's name in the
     engine's belief log, replaced by "[erased]" wherever it is in a line (in lists and nested values too).
-The dry run reads every text column of every table in the database. A name in a table or column the erase doesn't
-remove from (a table added by hand, say) is listed, and the erase refuses until a person has dealt with it.
+The dry run reads every text column of every table in the database, and the schema (table, view, trigger and index
+names and definitions, column defaults included). A name in a table or column the erase doesn't remove from (a table
+added by hand, say), or in the schema, is listed, and the erase refuses before changing anything until a person has
+dealt with it.
 Then it rebuilds the vector indexes from what remains, VACUUMs the database (with secure_delete on, so the deleted rows
 are zeroed even if VACUUM can't run) and truncates its write-ahead log. Its check reads every text column of every
-table again; reads back every byte of the database files (folding case, accents, look-alike letters and the common
-invisible characters, decoding escapes, and looking for the erased embeddings), with no word edges, since the bytes
-around a column value are anything, and telling a kept longer word that contains the name ("Quinterova") apart by the
-kept rows; reads the wiki folder and the engine's belief files; and runs the dry run again. If the name or an erased
+table again; reads back every byte of the database files (folding case, accents, look-alike letters and invisible
+characters, decoding escapes, and looking for the erased embeddings), with no word edges, since the bytes around a
+column value are anything, and accepts a match there only where a near-match a person ruled someone else stands in a
+kept row, or by chance inside a kept vector; reads the wiki folder and the engine's belief files; and runs the dry run
+again, which must find nothing to remove or refuse on and no near-match nobody ruled on. If the name or an erased
 embedding is still there, or VACUUM or the log truncation failed, that is an error (EraseIncomplete), never a success.
 
-The dry run gives a code, a hash of exactly what it found. The erase runs only with that code, so what is removed is
-what a person read; if anything changed in between, the code doesn't match and nothing is removed. Each erase is
-recorded in $APOLAKI_HOME/erasures.jsonl: who, why, when and how much, never the name.
+The dry run gives a code, a hash of exactly what it found, near-matches included. The erase runs only with that code,
+so what is removed is what a person read; if anything changed in between, the code doesn't match and nothing is
+removed. Each erase is recorded in $APOLAKI_HOME/erasures.jsonl: who, why, when, how much, and each near-match ruled
+someone else (where it is), never the name.
 
 What it can't do:
   - find the person by anything but the name and aliases given. A nickname, initials, a pronoun, a role ("our board
-    chair"), a misspelling, the parts in another order ("Quintero, Marisol") or an encoding the store doesn't use
-    (HTML entities, percent-encoding) isn't found; list such variants as aliases, and read what each finds in the dry
-    run.
+    chair"), a misspelling or the parts in another order ("Quintero, Marisol") isn't found; list such variants as
+    aliases, and read what each finds in the dry run. The byte check of the database files doesn't take markup out
+    (the rows are read with it taken out).
+  - erase by a name shorter than three letters (a two-character Chinese name included): it would match inside too much.
   - keep the rest of a memory. A memory that names the person goes whole, with whatever else it said; the dry run
     shows each one, so a person can store again what should stay, without the name.
   - reach records that aren't memory. Approval-queue items, grant drafts, the grant hunt's files, the quarantine,
-    logs and backups can hold the name too: the dry run lists every other file under $APOLAKI_HOME the name is in,
-    for a person to deal with, and leaves them alone. Copies outside $APOLAKI_HOME are beyond it.
+    logs and backups can hold the name too: the dry run lists every other file under $APOLAKI_HOME the name (or a
+    near-match) is in, for a person to deal with, and leaves them alone. Copies outside $APOLAKI_HOME are beyond it.
   - run beside a live Apolaki. VACUUM needs the database to itself: stop the scheduled jobs and the MCP server
     first (docs/STOPPING.md).
   - settle a licence question. Apolaki's licence carries the SAFE-AI module, whose memory-sovereignty clause says
@@ -65,12 +87,16 @@ What it can't do:
 """
 from __future__ import annotations
 
+import array
+import functools
 import hashlib
+import html
 import json
 import re
 import sqlite3
 import types
 import unicodedata
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -118,11 +144,34 @@ def _unescape(text: str) -> str:
     return out
 
 
+# Markup a reader doesn't see, for the form of a text with it taken out: a Markdown link or image ("[Marisol](url)"
+# reads "Marisol"), a reference link ("[Marisol][1]"), an HTML tag, an HTML entity ("Mar&iacute;a") and
+# percent-encoding ("Mar%C3%ADa").
+_MD_LINK = re.compile(r"!?\[([^\]\n]{0,300})\](?:\([^)\n]{0,1000}\)|\[[^\]\n]{0,100}\])")
+_TAG = re.compile(r"<[^<>\n]{0,1000}>")
+_MARKUP = re.compile(r"\]\(|\]\[|<[^<>\n]{0,1000}>|&#?\w{1,32};|%[0-9a-fA-F]{2}")
+
+
+def _demarked(text: str) -> tuple[str, ...]:
+    """The text with its markup taken out, a tag taken as nothing ("Mari<b>sol</b>") and as a space ("Marisol<br>
+    Quintero"); () when it has none."""
+    if not _MARKUP.search(text):
+        return ()
+    t = _MD_LINK.sub(lambda m: m.group(1), text)
+    t = urllib.parse.unquote(html.unescape(t)) if ("&" in t or "%" in t) else t
+    return (_TAG.sub("", t), _TAG.sub(" ", t))
+
+
 def _variants(text: str) -> tuple[str, ...]:
-    """The text as stored, and with its escapes decoded when that differs. Both are read: decoding can also hide a
-    match ("C:\\nicolas" would lose its n), so the stored form is never dropped."""
+    """The text as stored, with its escapes decoded, and with its markup taken out (_demarked), each when it differs.
+    All are read: decoding can also hide a match ("C:\\nicolas" would lose its n), so the stored form is never
+    dropped."""
+    out = [text]
     decoded = _unescape(text)
-    return (text,) if decoded == text else (text, decoded)
+    for t in (decoded, *_demarked(text), *(_demarked(decoded) if decoded != text else ())):
+        if t not in out:
+            out.append(t)
+    return tuple(out)
 
 
 def _fold(text: str) -> str:
@@ -134,15 +183,38 @@ def _fold(text: str) -> str:
 
 
 # For the byte-level check of the database files, whose float vectors decode to megabytes of non-ASCII noise:
-# normalize() runs at about 3 s a million characters there, so the bytes get a fold done in C instead. It covers case,
-# accents (combining marks in the main blocks), look-alike letters, tag characters and the common invisible
-# characters, not every format character Unicode has; the rows themselves are checked with the full fold (plan()).
-_COMMON_INVISIBLE = re.compile("[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f"
-                               "\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb"
-                               "\U000e0000-\U000e0fff]")
-_COMBINING = re.compile("[\u0300-\u036f\u0483-\u0489\u0591-\u05c7\u0610-\u061a\u064b-\u065f\u0670"
-                        "\u06d6-\u06ed\u0900-\u0903\u093a-\u094f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff"
-                        "\ufe20-\ufe2f]")
+# normalize() runs at about 3 s a million characters there, so the bytes get the same fold done in C instead (regular
+# expressions and unicodedata): tag characters, every format character (Unicode category Cf) and the Hangul fillers
+# out, quotes straight, compatibility decomposition, every combining mark (Mn, Me) out, look-alike letters folded,
+# composition, case folded. The classes are built from unicodedata on first use (about a second), since only an erase
+# needs them.
+def _class_of(codes: list[int]) -> re.Pattern:
+    runs: list[list[int]] = []
+    for c in sorted(codes):
+        if runs and c == runs[-1][1] + 1:
+            runs[-1][1] = c
+        else:
+            runs.append([c, c])
+    return re.compile("[" + "".join(re.escape(chr(x)) + (f"-{re.escape(chr(y))}" if y > x else "")
+                                    for x, y in runs) + "]")
+
+
+_ASTRAL = re.compile("[\U00010000-\U0010ffff]")
+
+
+@functools.lru_cache(maxsize=1)
+def _byte_fold_strip():
+    """(invisible, marks, astral): character classes of the format characters (Cf) and Hangul fillers, and of the
+    combining marks (Mn, Me), each within the Basic Multilingual Plane, where a class is a bitmap the regex engine
+    tests in one step; and a function that drops the ones past it (a class of ranges there is tested range by range,
+    which took 40 s on a vector index's chunks), found by one range and looked up only where one stands."""
+    codes = [*range(0x20000), *range(0xE0000, 0xE1000)]
+    cats = list(map(unicodedata.category, map(chr, codes)))
+    invisible = [c for c, k in zip(codes, cats) if k == "Cf"] + [0x115F, 0x1160, 0x3164, 0xFFA0]
+    marks = [c for c, k in zip(codes, cats) if k in ("Mn", "Me")]
+    far = frozenset(chr(c) for c in invisible + marks if c > 0xFFFF)
+    return (_class_of([c for c in invisible if c <= 0xFFFF]), _class_of([c for c in marks if c <= 0xFFFF]),
+            lambda text: _ASTRAL.sub(lambda m: "" if m.group() in far else m.group(), text))
 
 
 def _swap(table: dict):
@@ -164,10 +236,10 @@ _untag, _straighten, _unlook = _swap(_TAG_ASCII), _swap(_QUOTES), _swap(_LOOKALI
 
 
 def _fold_fast(text: str) -> str:
-    t = _untag(text)
-    t = _straighten(_COMMON_INVISIBLE.sub("", t))
-    t = _unlook(_COMBINING.sub("", unicodedata.normalize("NFKD", t)))
-    return t.casefold()
+    invisible, marks, far = _byte_fold_strip()
+    t = _straighten(invisible.sub("", _untag(text)))
+    t = _unlook(far(marks.sub("", unicodedata.normalize("NFKD", t))))
+    return _straighten(unicodedata.normalize("NFC", t)).casefold()
 
 
 def _fold_bytes(raw: bytes) -> str:
@@ -194,23 +266,80 @@ def _byte_texts(raw: bytes) -> list[str]:
     return out + [_fold_fast(_unescape(text[a:b])) for a, b in spans]
 
 
-# Between two parts of a name: any run of spaces, hyphens and dashes, apostrophes, full stops and underscores, or none.
-_SEP = r"[\s\-\u2010-\u2015\u2212'._]"     # \u2010-\u2015: the Unicode hyphens and dashes; \u2212: minus
+# Between two parts of a name: any run of spaces, hyphens and dashes, apostrophes, full stops, underscores and markup
+# characters (* [ ] ( ) { } < > / \ | # ~ ^ = +), or none.
+# \u2010-\u2015 are the Unicode hyphens and dashes; \u2212 is the minus sign.
+_SEP = r"[\s\-\u2010-\u2015\u2212'._*\[\](){}<>/\\|#~^=+]"
 _SPLIT = re.compile(_SEP + "+")
-_EDGE_BEFORE, _EDGE_AFTER = r"(?<![^\W_])", r"(?![^\W_])"     # not touching a letter or a digit
+# Scripts written without spaces between words (Chinese, Japanese, Thai, Lao, Khmer, Myanmar, Tibetan, Yi), and
+# Korean, whose particles and honorifics attach to a name: a name written in one has no word edge to keep, and a
+# character of one next to a name in another script is a separator ("Quintero\u3055\u3093").
+_NO_SPACE = ("\u0e00-\u0eff\u0f00-\u0fff\u1000-\u109f\u1780-\u17ff\u19e0-\u19ff"   # Thai, Lao, Tibetan, Myanmar, Khmer
+             "\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7ff"                 # Hangul
+             "\u2e80-\u2fdf\u3005-\u3007\u3021-\u3029\u3031-\u3035\u303b\u303c"     # CJK radicals, marks, numbers
+             "\u3040-\u30ff\u31f0-\u31ff\u3100-\u312f\u31a0-\u31bf"                 # kana, Bopomofo
+             "\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ua000-\ua4cf"                 # ideographs, Yi
+             "\U00020000-\U0003134f")                                              # ideographs, extensions B-G
+_NO_SPACE_CHAR = re.compile(f"[{_NO_SPACE}]")
+# A letter or digit that ends a word: one of a script written with spaces. A digit after the name doesn't ("Quintero85",
+# "@MarisolQuintero1990" are her handles).
+_LETTER = rf"(?![{_NO_SPACE}])[^\W_]"
+_EDGE_BEFORE, _EDGE_AFTER = rf"(?<!{_LETTER})", rf"(?!(?!\d){_LETTER})"
+# Arabic writes a conjunction (wa, fa), a preposition (bi, li, ka) and the article (al) joined to the next word:
+# "\u0628\u0645\u062d\u0645\u062f" is "with Muhammad". Each such prefix may stand before an Arabic name.
+_ARABIC = re.compile("[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]")
+_ARABIC_PREFIXES = sorted({c + p + a for c in ("", "\u0648", "\u0641") for p in ("", "\u0628", "\u0644", "\u0643")
+                           for a in ("", "\u0627\u0644")} | {c + "\u0644\u0644" for c in ("", "\u0648", "\u0641")}
+                          - {""}, key=lambda x: (len(x), x))
 
 
 def _matcher(names: list[str], edges: bool = True) -> re.Pattern:
-    """The names as one pattern over folded text (see the module docstring). edges=False drops the word edges, for
-    the byte check, where the bytes around a column value are anything."""
+    """The names as one pattern over folded text (see the module docstring). edges=False drops the word edges: what it
+    finds that the pattern with edges doesn't is a near-match, the name inside a longer word."""
     alts = []
     for n in names:
         parts = [p for p in _SPLIT.split(_fold(n)) if p]
         if not parts or len("".join(parts)) < MIN_NAME_CHARS:
             raise EraseError(f"{n!r} is too short to erase by: give a name of at least {MIN_NAME_CHARS} letters")
-        alts.append((_SEP + "*").join(re.escape(p) for p in parts))
-    body = "(?:" + "|".join(alts) + ")"
-    return re.compile(_EDGE_BEFORE + body + _EDGE_AFTER if edges else body)
+        body = (_SEP + "*").join(re.escape(p) for p in parts)
+        if edges:
+            first, last = parts[0][0], parts[-1][-1]
+            before = "" if _NO_SPACE_CHAR.match(first) else _EDGE_BEFORE
+            if _ARABIC.match(first):
+                before = "(?:" + "|".join([_EDGE_BEFORE] + [f"(?<=(?<!{_LETTER}){re.escape(x)})"
+                                                            for x in _ARABIC_PREFIXES]) + ")"
+            body = before + body + ("" if _NO_SPACE_CHAR.match(last) else _EDGE_AFTER)
+        alts.append(body)
+    return re.compile("(?:" + "|".join(alts) + ")")
+
+
+_WORD_CHAR = re.compile(r"[^\W_]")
+
+
+def _word_around(text: str, start: int, end: int) -> tuple[str, int]:
+    """The run of letters and digits around text[start:end], and where text[start:end] starts in it."""
+    a, b = start, end
+    while a > 0 and _WORD_CHAR.match(text[a - 1]):
+        a -= 1
+    while b < len(text) and _WORD_CHAR.match(text[b]):
+        b += 1
+    return text[a:b], start - a
+
+
+def _near_in(hit: re.Pattern, loose: re.Pattern, folded: str) -> list[str]:
+    """The near-matches in a folded text: each word a match without edges stands in where no match with edges starts."""
+    return [_word_around(folded, m.start(), m.end())[0] for m in loose.finditer(folded)
+            if not hit.match(folded, m.start())]
+
+
+def _near_words(hit: re.Pattern, loose: re.Pattern, *texts) -> list[str]:
+    """The near-matches in any of the texts, read as stored, with escapes decoded and with markup taken out."""
+    out: list[str] = []
+    for t in texts:
+        if isinstance(t, str) and t:
+            for v in _variants(t):
+                out += [w for w in _near_in(hit, loose, _fold(v)) if w not in out]
+    return out
 
 
 def _names_in(hit: re.Pattern, *texts) -> bool:
@@ -245,69 +374,115 @@ def _rows(con, table: str):
         yield rec.get("id", rec.get("erase_rowid_")), rec
 
 
+# What an embedding's numbers can be: store() writes normalised vectors (each component under 1), and the vector indexes
+# hold the same floats. A blob counts as numbers when, read as little-endian float32, no float in it reaches 128 or is
+# infinite or not a number: a float's top byte holds its sign and most of its exponent, and that byte must be at most
+# 0x42 once the sign is masked off. Text in another encoding isn't one: a lower-case letter, or a capital from C on, in
+# a float's top byte makes it 128 or more, and natural text puts letters in a quarter of those bytes.
+_TOP_BYTE_LIMIT = 0x42
+_UNSIGNED = bytes(b & 0x7F for b in range(256))
+
+
+def _is_vector(raw: bytes) -> bool:
+    """Whether a blob reads as float32 numbers of an embedding's size (see above). Checked in C, byte by byte: the
+    vector indexes' chunks are megabytes."""
+    if len(raw) < 16 or len(raw) % 4:
+        return False
+    return max(raw[3::4].translate(_UNSIGNED)) <= _TOP_BYTE_LIMIT
+
+
 def _cell_text(value) -> str | None:
-    """A cell as text: a string as it is, a blob that is valid UTF-8 (text kept as a blob) decoded, else None. Float
-    vectors are practically never valid UTF-8; they are left to the byte check."""
+    """A cell as text: a string as it is; a blob that is valid UTF-8 decoded; a blob that reads as an embedding's
+    numbers (_is_vector) None, since its bytes are numbers, left to the byte check; any other blob decoded as Latin-1,
+    since it may be text in another encoding and the name in it must be found."""
     if isinstance(value, str):
         return value
     if isinstance(value, (bytes, memoryview)):
+        raw = bytes(value)
         try:
-            return bytes(value).decode("utf-8")
+            return raw.decode("utf-8")
         except UnicodeDecodeError:
-            return None
+            return None if _is_vector(raw) else raw.decode("latin-1")
     return None
 
 
-def _traces(con, hit: re.Pattern) -> list[tuple[str, str, object]]:
-    """(table, column, key) for every text cell, in every table, that names the person (a blob that is text counts).
-    Binary blobs (embeddings, the vec0 chunks) are left to the byte check, which reads every byte of the database
-    files."""
-    found = []
+def _scan(con, hit: re.Pattern, loose: re.Pattern) -> tuple[list, list]:
+    """Every text cell, in every table (a blob that may be text counts, _cell_text): (traces, nears). A trace is
+    (table, column, key) for a cell that names the person; a near is (table, column, key, word, text) for each word in a
+    cell that holds the name inside a longer word. Vectors are left to the byte check, which reads every byte of the
+    database files."""
+    traces, nears = [], []
     for table, cols in _tables(con):
         for key, rec in _rows(con, table):
-            found += [(table, c, key) for c in cols if _names_in(hit, _cell_text(rec.get(c)))]
-    return found
+            for c in cols:
+                text = _cell_text(rec.get(c))
+                if not text:
+                    continue
+                if _names_in(hit, text):
+                    traces.append((table, c, key))
+                nears += [(table, c, key, w, text) for w in _near_words(hit, loose, text)]
+    return traces, nears
 
 
-# Context kept on each side of a match inside a binary blob, to recognise the same bytes in the file.
+def _traces(con, hit: re.Pattern) -> list[tuple[str, str, object]]:
+    """(table, column, key) for every text cell, in every table, that names the person (see _scan)."""
+    return [(t, c, k) for t, cols in _tables(con) for k, rec in _rows(con, t) for c in cols
+            if _names_in(hit, _cell_text(rec.get(c)))]
+
+
+def _schema(con, hit: re.Pattern, loose: re.Pattern) -> tuple[list[dict], list]:
+    """The schema objects (tables, views, triggers, indexes) whose name or definition names the person (a column default
+    is in its table's definition), and the near-matches in them as _scan gives them, keyed by the object's name."""
+    found, nears = [], []
+    for kind, name, sql in con.execute("SELECT type, name, sql FROM sqlite_master ORDER BY type, name"):
+        where = [w for w, text in (("name", name), ("definition", sql)) if _names_in(hit, text)]
+        if where:
+            found.append({"type": kind, "name": name, "where": " and ".join(where)})
+        for col, text in (("name", name), ("sql", sql)):
+            nears += [("sqlite_master", col, name, w, text) for w in _near_words(hit, loose, text)]
+    return found, nears
+
+
+# Context kept on each side of a match inside a vector, to recognise the same bytes in the file.
 _BLOB_CONTEXT = 16
 
 
-def _kept_bytes(db: Path, loose: re.Pattern) -> set[tuple[str, int]]:
-    """What the byte check, which has no word edges, may find in kept data without it being a trace: (folded text,
-    where the name starts in it).
-      - a longer word in a kept text cell (or the schema) that holds the name, "Quinterova" for "Quintero": the
-        word. A match with word edges isn't collected: it is a trace, and the row check reports it;
-      - a match by chance inside a kept binary blob (a float vector holds a short name's bytes now and then): the
-        match with up to _BLOB_CONTEXT characters of the blob on each side."""
+def _explained_bytes(db: Path, hit: re.Pattern, loose: re.Pattern, ruled: set[str]) -> set[tuple[str, int]]:
+    """What the byte check, which reads the name without word edges, may find in kept data without it being a trace:
+    (fast-folded text, where the name starts in it). Nothing else is explained, and an unexplained match is a trace.
+      - a near-match a person ruled someone else (ruled, folded words), where a kept text cell, or the schema, holds it:
+        the word. A near-match nobody ruled on isn't collected, nor is a match with edges;
+      - a match by chance inside a kept vector (a float vector holds a short name's bytes now and then, in the low
+        bytes of a float): the match with up to _BLOB_CONTEXT characters of the vector on each side."""
     out: set[tuple[str, int]] = set()
     if not db.is_file():
         return out
     con = sqlite3.connect(str(db), timeout=BUSY_TIMEOUT_S)
     try:
         con.execute("PRAGMA query_only = 1")
-        texts = [r[0] for r in con.execute("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL")]
-        blobs = []
+        raws = [(r[0] or "").encode("utf-8") for r in con.execute("SELECT name FROM sqlite_master")]
+        raws += [r[0].encode("utf-8") for r in con.execute("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL")]
+        vectors = []
         for table, cols in _tables(con):
             for _, rec in _rows(con, table):
                 for c in cols:
                     v = rec.get(c)
-                    text = _cell_text(v)
-                    if text is not None:
-                        texts.append(text)
+                    if isinstance(v, str):
+                        raws.append(v.encode("utf-8"))
                     elif isinstance(v, (bytes, memoryview)):
-                        blobs.append(bytes(v))
+                        (raws if _cell_text(v) is not None else vectors).append(bytes(v))
     finally:
         con.close()
-    for text in texts:
-        for t in _byte_texts(text.encode("utf-8")):
+    for raw in raws:
+        for t in _byte_texts(raw):
             for m in loose.finditer(t):
-                left = re.search(r"[^\W_]*\Z", t[:m.start()]).group()
-                right = re.match(r"[^\W_]*", t[m.end():]).group()
-                if left or right:
-                    out.add((left + m.group() + right, len(left)))
-    for blob in blobs:
-        for t in _byte_texts(blob):
+                if hit.match(t, m.start()):
+                    continue                      # the name itself, in a kept row: a trace, never explained
+                word, off = _word_around(t, m.start(), m.end())
+                if _fold(word) in ruled:
+                    out.add((word, off))
+    for raw in vectors:
+        for t in _byte_texts(raw):
             for m in loose.finditer(t):
                 a, b = max(0, m.start() - _BLOB_CONTEXT), m.end() + _BLOB_CONTEXT
                 out.add((t[a:b], m.start() - a))
@@ -326,7 +501,10 @@ class Plan:
     beliefs: list[str] = field(default_factory=list)
     belief_log_lines: int = 0
     elsewhere: list[tuple[str, int]] = field(default_factory=list)
+    elsewhere_near: list[tuple[str, int]] = field(default_factory=list)   # files with near-matches only
     db_other: list[dict] = field(default_factory=list)      # {"table", "column", "rows"}: named where it can't remove
+    schema: list[dict] = field(default_factory=list)        # {"type", "name", "where"}: schema objects that name them
+    near: list[dict] = field(default_factory=list)          # {"word", "place", "text"}: kept, until a person rules
     vec_tables: list[str] = field(default_factory=list)
     code: str = ""
 
@@ -334,7 +512,10 @@ class Plan:
         return {"memories": len(self.memories), "entities": len(self.entities), "mentions": len(self.mentions),
                 "triples": len(self.triples), "wiki_pages": len(self.wiki_pages), "wiki_files": len(self.wiki_files),
                 "beliefs": len(self.beliefs), "belief_log_lines": self.belief_log_lines,
-                "unremovable_cells": sum(d["rows"] for d in self.db_other)}
+                "unremovable_cells": sum(d["rows"] for d in self.db_other), "schema_objects": len(self.schema)}
+
+    def near_words(self) -> list[str]:
+        return sorted({n["word"] for n in self.near})
 
     def empty(self) -> bool:
         return not any(self.counts().values())
@@ -391,13 +572,22 @@ def _read_rows(path: Path) -> list | None:
     return rows if isinstance(rows, list) else None
 
 
+def _snippet(text: str, word: str) -> str:
+    """Up to 110 characters of a text, around where the near-match word is, for the dry run."""
+    flat = " ".join((text or "").split())
+    at = _fold(flat).find(word)
+    start = max(0, at - 40) if at >= 0 else 0
+    return ("..." if start else "") + flat[start:start + 110]
+
+
 def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> Plan:
-    """Everything the erase would remove, without changing anything."""
+    """Everything the erase would remove, and every near-match it would keep, without changing anything."""
     home = home or config.home()
     names = [name, *aliases]
-    hit = _matcher(names)
+    hit, loose = _matcher(names), _matcher(names, edges=False)
     p = _paths(home)
     out = Plan(names=names)
+    nears: list[tuple[dict, str, str]] = []      # (place, word, text) for each near-match in what the erase keeps
 
     def named(*texts) -> bool:
         return _names_in(hit, *texts)
@@ -405,8 +595,10 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
     if p["db"].is_file():
         con, out.vec_tables = _open(p["db"], readonly=True)
         try:
-            # Every text column of every table, read once: what names the person, by table, as row keys.
-            traces = _traces(con, hit)
+            # Every text column of every table, read once: what names the person, by table, as row keys; and the
+            # schema (table, view, trigger and index names and definitions, column defaults included).
+            traces, cell_nears = _scan(con, hit, loose)
+            out.schema, schema_nears = _schema(con, hit, loose)
             in_table: dict[str, set] = {}
             for table, _, key in traces:
                 in_table.setdefault(table, set()).add(key)
@@ -459,6 +651,8 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
                 if key not in removed.get(table, ()):
                     other[(table, col)] = other.get((table, col), 0) + 1
             out.db_other = [{"table": t, "column": c, "rows": n} for (t, c), n in sorted(other.items())]
+            nears += [({"table": t, "column": c, "row": key}, w, text)
+                      for t, c, key, w, text in cell_nears + schema_nears if key not in removed.get(t, ())]
         finally:
             con.close()
     else:
@@ -478,17 +672,31 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
             elif named(rel.replace("_", " "), text) or f.name in {_wiki_name(n) for n in gone_names}:
                 title = kept_by_file.get(f.name)
                 out.wiki_files.append({"file": rel, "action": "rebuild" if title else "remove", "title": title})
+            else:                 # a page the erase leaves alone: its name and text can still hold a near-match
+                nears += [({"file": "wiki/" + rel}, w, t) for t in (rel.replace("_", " "), text)
+                          for w in _near_words(hit, loose, t)]
 
     rows = _read_rows(p["beliefs"])
     if rows is None:
         raise EraseError(f"{p['beliefs']} can't be read, so beliefs naming the person couldn't be found. Nothing "
                          f"was removed")
-    out.beliefs = [r.get("id") for r in rows if isinstance(r, dict) and named(json.dumps(r, ensure_ascii=False))]
+    for r in rows:
+        text = json.dumps(r, ensure_ascii=False)
+        if isinstance(r, dict) and named(text):
+            out.beliefs.append(r.get("id"))
+        else:
+            nears += [({"file": p["beliefs"].name, "row": r.get("id") if isinstance(r, dict) else None}, w, text)
+                      for w in _near_words(hit, loose, text)]
     try:
-        out.belief_log_lines = sum(1 for line in p["belief_log"].read_text(encoding="utf-8").splitlines()
-                                   if named(line))
+        log = p["belief_log"].read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
-        pass
+        log = []
+    for i, line in enumerate(log, 1):
+        if named(line):
+            out.belief_log_lines += 1
+        kept_text = _redacted_line(line, hit) if named(line) else line      # what the redaction leaves of the line
+        nears += [({"file": p["belief_log"].name, "row": i}, w, kept_text) for w in _near_words(hit, loose, kept_text)]
+    out.near = [{"word": w, "place": place, "text": _snippet(text, w)} for place, w, text in nears]
 
     handled = {p["db"], p["wal"], p["shm"], p["beliefs"], p["belief_log"], p["ledger"]}
     for f in sorted(home.rglob("*")) if home.is_dir() else []:
@@ -502,11 +710,14 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
         n = max(len(hit.findall(t)) for t in texts)
         if n:
             out.elsewhere.append((str(f.relative_to(home)), n))
+        elif any(_near_in(hit, loose, t) for t in texts):
+            out.elsewhere_near.append((str(f.relative_to(home)), max(len(_near_in(hit, loose, t)) for t in texts)))
 
     ident = {"names": [_fold(n) for n in names], "memories": [m["id"] for m in out.memories],
              "entities": [e["id"] for e in out.entities], "mentions": out.mentions, "triples": out.triples,
              "wiki_pages": out.wiki_pages, "wiki_files": out.wiki_files, "beliefs": out.beliefs,
-             "belief_log_lines": out.belief_log_lines, "db_other": out.db_other}
+             "belief_log_lines": out.belief_log_lines, "db_other": out.db_other, "schema": out.schema,
+             "near": sorted(json.dumps([n["word"], n["place"]], sort_keys=True, default=str) for n in out.near)}
     out.code = hashlib.sha256(json.dumps(ident, sort_keys=True).encode()).hexdigest()[:12]
     return out
 
@@ -537,17 +748,19 @@ def _delete(con, table: str, ids: list[str]) -> None:
         con.execute(f"DELETE FROM {table} WHERE id IN (%s)" % ",".join("?" * len(chunk)), tuple(chunk))
 
 
-def leftovers(names: list[str], home: Path, blobs: list[bytes] = ()) -> list[str]:
-    """Where the name, or one of the given embeddings, can still be read; [] when nowhere. Four checks:
-      - every text column of every table, with the full fold and escapes decoded;
+def leftovers(names: list[str], home: Path, blobs: list[bytes] = (), others: tuple[str, ...] = ()) -> list[str]:
+    """Where the name, or one of the given embeddings, can still be read; [] when nowhere. others are the near-match
+    words a person ruled someone else (erase's not_them). Four checks:
+      - every text column of every table, with the full fold, escapes decoded and markup taken out;
       - the bytes of the database, its write-ahead log, shared-memory file and any rollback journal (a fast fold, see
         _fold_bytes, escapes decoded), where the embeddings are looked for too. The name is looked for without word
         edges, since the bytes around a column value are anything (the timestamp before archive_reason ends in a
-        digit); a kept longer word that holds the name ("Quinterova"), or a chance match inside a kept float vector,
-        is told apart by the kept rows (_kept_bytes);
+        digit). A match is accepted only where kept data explains it (_explained_bytes): a near-match ruled someone
+        else, in a kept row, or a chance match inside a kept vector. A longer word nobody ruled on explains nothing;
       - the wiki folder (contents and file names) and the engine's belief files, with the full fold, escapes decoded;
-      - a second dry run, which must find nothing."""
+      - a second dry run, which must find nothing to remove or refuse on, and no near-match nobody ruled on."""
     hit, loose = _matcher(names), _matcher(names, edges=False)
+    ruled = {_fold(w) for w in others}
     p = _paths(home)
     found = []
     if p["db"].is_file():
@@ -557,16 +770,16 @@ def leftovers(names: list[str], home: Path, blobs: list[bytes] = ()) -> list[str
             found += sorted({f"{p['db']}: table {t}, column {c}: the name" for t, c, _ in _traces(con, hit)})
         finally:
             con.close()
-    kept = None                          # read from the kept rows only when the bytes hold a match to explain
+    explained = None                     # read from the kept rows only when the bytes hold a match to explain
     for f in (p["db"], p["wal"], p["shm"], p["journal"]):
         try:
             raw = f.read_bytes()
         except FileNotFoundError:
             continue
         matches = [(t, m) for t in _byte_texts(raw) for m in loose.finditer(t)]
-        if matches and kept is None:
-            kept = _kept_bytes(p["db"], loose)
-        if any(not any(m.start() >= off and t.startswith(word, m.start() - off) for word, off in kept)
+        if matches and explained is None:
+            explained = _explained_bytes(p["db"], hit, loose, ruled)
+        if any(not any(m.start() >= off and t.startswith(word, m.start() - off) for word, off in explained)
                for t, m in matches):
             found.append(f"{f}: the name")
         if any(b and b in raw for b in blobs):
@@ -584,12 +797,20 @@ def leftovers(names: list[str], home: Path, blobs: list[bytes] = ()) -> list[str
     again = plan(names[0], tuple(names[1:]), home)
     if not again.empty():
         found.append(f"a second dry run still finds {', '.join(f'{v} {k}' for k, v in again.counts().items() if v)}")
+    unruled = [w for w in again.near_words() if w not in ruled]
+    if unruled:
+        found.append(f"{len(unruled)} near-match nobody ruled on (the name inside a longer word, in what was kept)")
     return found
 
 
 def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str = "", reason: str = "",
-          home: Path | None = None) -> dict:
-    """Remove what plan() lists, if confirm is its code. Returns {"code", "counts", "elsewhere", "ledger"}."""
+          home: Path | None = None, not_them: tuple[str, ...] = ()) -> dict:
+    """Remove what plan() lists, if confirm is its code. Returns {"code", "counts", "elsewhere", "near", "ledger"}.
+
+    not_them is a person's ruling on the plan's near-matches (the name inside a longer word, in what is kept): each word
+    named there is someone else, and stays. It must name every near-match word the plan lists and nothing else, or the
+    erase refuses before changing anything. A near-match that is the person is given as an alias instead, which erases
+    it. The ledger records each ruled near-match by where it is, never by the word, which contains the name."""
     home = home or config.home()
     if not by.strip():
         raise EraseError("say who is erasing (by)")
@@ -604,8 +825,23 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
                          + ", ".join(f"table {d['table']}, column {d['column']}: {d['rows']} row(s)"
                                      for d in p.db_other)
                          + "). Nothing was removed. A person deals with those rows first, then runs the dry run again")
+    if p.schema:
+        raise EraseError("the database's schema names the person (" + ", ".join(
+            f"{s['type']} {s['name']!r}: its {s['where']}" for s in p.schema) + "), and this erase doesn't change the "
+            "schema. Nothing was removed. A person renames or drops those first, then runs the dry run again")
+    ruled = sorted({_fold(w) for w in not_them if w.strip()})
+    wanted = p.near_words()
+    if sorted(set(ruled) - set(wanted)):
+        raise EraseError(f"--not-them names {len(set(ruled) - set(wanted))} word(s) the dry run didn't list as a "
+                         f"near-match (each must be a near-match word exactly as the dry run prints it). Nothing was "
+                         f"removed")
+    if sorted(set(wanted) - set(ruled)):
+        raise EraseError(f"the dry run lists {len(set(wanted) - set(ruled))} near-match(es) nobody has ruled on (the "
+                         f"name inside a longer word, in something the erase keeps). Nothing was removed. If each is "
+                         f"someone else, name it with --not-them WORD; if it is the person, give it as an --alias and "
+                         f"run the dry run again")
     names = p.names
-    hit = _matcher(names)
+    hit, loose = _matcher(names), _matcher(names, edges=False)
     paths = _paths(home)
     blobs: list[bytes] = []
     problems: list[str] = []
@@ -672,10 +908,7 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
             if not _names_in(hit, line):
                 out.append(line)
                 continue
-            try:
-                out.append(json.dumps(_redact(json.loads(line), hit), ensure_ascii=False))
-            except ValueError:
-                out.append(json.dumps({"kind": REDACTED}))
+            out.append(_redacted_line(line, hit))
         tmp = paths["belief_log"].with_suffix(".tmp")
         tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
         tmp.replace(paths["belief_log"])
@@ -683,19 +916,32 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
         from .. import learning
         learning.log_removed([{"id": b, "source": REDACTED} for b in p.beliefs], by="erase-person", redact=REDACTED)
 
-    left = problems + leftovers(names, home, blobs)
-    record = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "by": by.strip(),
-              "reason": reason.strip(), "code": p.code, "counts": p.counts(), "verified": not left,
-              "problems": problems, "other_files_naming_them": len(p.elsewhere)}
-    for k in ("reason", "by"):
-        if _names_in(hit, record[k]):
-            record[k] = REDACTED
+    left = problems + leftovers(names, home, blobs, others=tuple(ruled))
+
+    def unnamed(value):                  # a ledger value that names the person, even inside a longer word, isn't kept
+        return REDACTED if isinstance(value, str) and (_names_in(hit, value) or _near_words(hit, loose, value)) \
+            else value
+    record = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "by": unnamed(by.strip()),
+              "reason": unnamed(reason.strip()), "code": p.code, "counts": p.counts(), "verified": not left,
+              "problems": problems, "other_files_naming_them": len(p.elsewhere),
+              "near_matches": [{"place": {k: unnamed(v) for k, v in n["place"].items()}, "ruling": "someone else"}
+                               for n in p.near]}
     with paths["ledger"].open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
     if left:
         raise EraseIncomplete("the erase ran, but its check still reads the name or an erased embedding, or a step "
                               "that clears deleted bytes failed: " + "; ".join(left))
-    return {"code": p.code, "counts": p.counts(), "elsewhere": p.elsewhere, "ledger": str(paths["ledger"])}
+    return {"code": p.code, "counts": p.counts(), "elsewhere": p.elsewhere, "near": len(p.near),
+            "ledger": str(paths["ledger"])}
+
+
+def _redacted_line(line: str, hit: re.Pattern) -> str:
+    """A belief-log line with every string that names the person replaced (_redact); a line that isn't JSON goes
+    whole."""
+    try:
+        return json.dumps(_redact(json.loads(line), hit), ensure_ascii=False)
+    except ValueError:
+        return json.dumps({"kind": REDACTED})
 
 
 def _redact(value, hit: re.Pattern):
@@ -735,12 +981,30 @@ def describe(p: Plan) -> str:
         lines.append(f"\nIn the database where this command can't remove it from ({len(p.db_other)}), so the erase "
                      f"WILL REFUSE until a person deals with these rows:")
         lines += [f"  table {d['table']}, column {d['column']}: {d['rows']} row(s)" for d in p.db_other]
+    if p.schema:
+        lines.append(f"\nIn the database's schema ({len(p.schema)}), which this command doesn't change, so the erase "
+                     f"WILL REFUSE until a person renames or drops these:")
+        lines += [f"  {s['type']} {s['name']!r}: its {s['where']}" for s in p.schema]
+    if p.near:
+        lines.append(f"\nNear-matches ({len(p.near)}): the name inside a longer word, in what this erase keeps. The "
+                     f"erase WILL REFUSE until a person rules on each word: someone else (--not-them WORD), or the "
+                     f"person (give it as an --alias and run the dry run again, and it is erased):")
+        for n in p.near:
+            where = ", ".join(f"{k} {str(v)[:8] if k == 'row' and isinstance(v, str) else v}"
+                              for k, v in n["place"].items())
+            lines.append(f"  {n['word']!r}: {where}: {n['text']}")
     if p.elsewhere:
         lines.append(f"\nNot memory, so NOT erased by this command; the name is also in ({len(p.elsewhere)}):")
         lines += [f"  {path} ({'unreadable' if n < 0 else f'{n} time(s)'})" for path, n in p.elsewhere]
         lines.append("  A person deals with these by hand (see docs/DATA_LIFECYCLE.md).")
+    if p.elsewhere_near:
+        lines.append(f"\nNot memory, and NOT touched; the name inside a longer word is in ({len(p.elsewhere_near)}):")
+        lines += [f"  {path} ({n} near-match(es))" for path, n in p.elsewhere_near]
     if not p.empty():
         aliases = "".join(f" --alias {a!r}" for a in p.names[1:])
         lines.append(f"\nTo erase exactly this: python -m apolaki.engine erase-person {p.names[0]!r}{aliases} "
                      f"--confirm {p.code} --by WHO --reason WHY")
+        if p.near:
+            lines.append("  with, only if a person has read each near-match above and it is someone else: "
+                         + " ".join(f"--not-them {w!r}" for w in p.near_words()))
     return "\n".join(lines)

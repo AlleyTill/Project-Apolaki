@@ -20,7 +20,8 @@
     python -m apolaki.engine review QUEUE_ID approved|rejected|changes_requested ["NOTE"] [--by NAME] [--override WHY]
     python -m apolaki.engine requeue QUEUE_ID   # an edited item becomes a new item, with its own check and hash
     python -m apolaki.engine sync            # turn recorded decisions into beliefs
-    python -m apolaki.engine erase-person NAME [--alias A] [--confirm CODE --by WHO --reason WHY]   # apolaki.agent.erase
+    python -m apolaki.engine erase-person NAME [--alias A] [--confirm CODE --by WHO --reason WHY [--not-them WORD]]
+                                             # apolaki.agent.erase
 """
 from __future__ import annotations
 
@@ -249,6 +250,8 @@ def main(argv=None) -> int:
     x.add_argument("--confirm", default="", help="the code the dry run printed: erases exactly what it listed")
     x.add_argument("--by", default="", help="who is erasing (needed with --confirm)")
     x.add_argument("--reason", default="", help="why, for the erasure record (needed with --confirm; no names)")
+    x.add_argument("--not-them", action="append", default=[], metavar="WORD",
+                   help="a near-match the dry run listed that is someone else; repeat for each (needed for every one)")
     a = ap.parse_args(argv)
     if a.cmd == "erase-person":
         from .agent import erase as X
@@ -256,7 +259,8 @@ def main(argv=None) -> int:
             if not a.confirm:
                 print(X.describe(X.plan(a.name, tuple(a.alias))))
                 return 0
-            done = X.erase(a.name, tuple(a.alias), confirm=a.confirm, by=a.by, reason=a.reason)
+            done = X.erase(a.name, tuple(a.alias), confirm=a.confirm, by=a.by, reason=a.reason,
+                           not_them=tuple(a.not_them))
         except X.EraseError as e:
             incomplete = isinstance(e, X.EraseIncomplete)
             print(f"ERASE INCOMPLETE: {e}" if incomplete else f"not erased: {e}", file=sys.stderr)
@@ -265,7 +269,8 @@ def main(argv=None) -> int:
         print(f"erased: {c['memories']} memories, {c['entities']} entities, {c['mentions']} mentions, "
               f"{c['triples']} triples, {c['wiki_pages']} wiki pages and {c['wiki_files']} wiki files touched, "
               f"{c['beliefs']} beliefs; checked every text column of every table, the database files byte for byte, "
-              f"the wiki and the belief files; recorded in {done['ledger']} without the name")
+              f"the wiki and the belief files; {done['near']} near-match(es) ruled someone else and kept; recorded in "
+              f"{done['ledger']} without the name")
         if done["elsewhere"]:
             print(f"still named in {len(done['elsewhere'])} file(s) that aren't memory (not touched): "
                   + ", ".join(path for path, _ in done["elsewhere"]))

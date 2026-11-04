@@ -28,6 +28,7 @@ its graph entries: archive is for Apolaki's own beliefs, not for someone's perso
 ```bash
 python -m apolaki.engine erase-person "NAME" --alias "OTHER FORM"        # a dry run: nothing changes
 python -m apolaki.engine erase-person "NAME" --alias "OTHER FORM" --confirm CODE --by WHO --reason WHY
+python -m apolaki.engine erase-person "NAME" ... --not-them "WORD"         # once for each near-match, if any
 ```
 
 Stop the scheduled jobs and the MCP server first (docs/STOPPING.md): the erase needs the database to itself.
@@ -42,11 +43,27 @@ runs a second dry run. A check that still finds the name, or a compaction or log
 (`ERASE INCOMPLETE`, recorded as not verified), never a success.
 
 What counts as the name: case, accents, look-alike letters and invisible characters don't matter; the parts of a name
-may be joined by spaces, hyphens or dashes, apostrophes, full stops, underscores or nothing ("Jean-Luc Moreau" also
-finds "Jean Luc Moreau", "JeanLuc Moreau" and "jean_luc_moreau"); escaped text is read decoded (the store writes tags
-as JSON, so "L\u00f3pez" on disk is "López"). A longer name that only contains the one given ("Quinterova") is
-someone else. If the dry run finds the name in a table or column the erase doesn't remove from, it lists it and the
-erase refuses until a person has dealt with it.
+may be joined by spaces, hyphens or dashes, apostrophes, full stops, underscores, markup characters (`*`, `[`, `]`,
+`(`, `)`, `/` and the like) or nothing ("Jean-Luc Moreau" also finds "Jean Luc Moreau", "JeanLuc Moreau" and
+"jean_luc_moreau"; "Marisol Quintero" finds "**Marisol** Quintero" and "Marisol/Quintero"); escaped text is read
+decoded (the store writes tags as JSON, so "L\u00f3pez" on disk is "López"), and markup is read taken out (a Markdown
+link "[Marisol](url) Quintero", HTML tags and entities, percent-encoding). A digit after the name is still the name
+("marisol.quintero85@...", "@MarisolQuintero1990"). In scripts written without spaces (Chinese, Japanese, Thai and
+the like) and in Korean there is no word edge to keep, so a mention inside a sentence is found, and a character of
+those scripts next to a name in another script is a separator ("Quintero" with a Japanese honorific attached). An
+Arabic name with an attached prefix ("with", "and", "the") is found.
+
+A near-match is the name inside a longer word ("Marisol Quinterova"). It may be someone else, or the person. The dry
+run lists every near-match in what the erase keeps, with where it is and the text around it, and the erase refuses
+until a person rules on each one: `--not-them "WORD"` (the word exactly as the dry run prints it) says it is someone
+else and keeps it; giving it as an `--alias` says it is the person, and the next dry run lists it for removal. The
+erasure record lists each near-match ruled someone else by where it is, never by the word. The check after the erase
+accepts the name, read without word edges in the database's bytes, only where a ruled near-match stands in a kept row
+(or, for a short name, by chance inside a kept embedding's numbers).
+
+If the dry run finds the name in a table or column the erase doesn't remove from, or in the database's schema (a
+table, view, trigger or index name or definition, a column default), it lists it and the erase refuses before
+changing anything, until a person has dealt with it.
 
 What it leaves to a person: the files the dry run lists as "not erased" (approval-queue items, grant-hunt files, the
 quarantine, logs, backups). They are records of what was drafted, reviewed or received, and are edited or deleted
