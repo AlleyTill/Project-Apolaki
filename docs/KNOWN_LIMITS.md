@@ -156,8 +156,12 @@ The round 3 mutation run left guards with no test of their own, two of which hid
 HTML tag inside a name only as a space (a test with "Mari<b>sol</b> Quintero" is missing), and the intake screen's
 normalising of the reader's view (a test with "Ig" + zero-width space + "nore all <b>previous</b> instructions" is
 missing). Also untested: near-matches found in the schema, the "only a few left" flag, an unclosed HTML comment, and
-the word edge after a name in a script written without spaces. `ethics_check(text)` with no facts reads the text as
-a draft with no brief, so a count of what is left in it is blocked even when the text states that count itself; the
-brief and the chat pass the text as its own facts (round 4). The strict expected failures in
-`tests/test_red_team_probes.py` (KNOWN_WRONG) list the ethics checks' known wrong verdicts; one that starts passing
-fails the run, so that list stays true.
+the word edge after a name in a script written without spaces. `ethics_check(text)` with no facts reads the text as a
+draft with no brief, so a count of what is left in it is blocked even when the text states that count itself; the
+brief and the chat pass the text as its own facts (round 4). Round 4's own mutation run (60 mutants of the lines it
+changed, from a frozen copy) killed 55 on an assertion and left 5 alive, each with the same verdicts as the code: the
+vector indexes' chunks read wide as well, UTF-32 decoded with the codec's error handler, the two UTF-32 byte orders
+read in each other's place, the wide readings folded by the slow fold (all four change only the time an erase takes),
+and the intake's early return for a text with no "<" (the reader's view already decodes such a text's entities). The
+strict expected failures in `tests/test_red_team_probes.py` (KNOWN_WRONG) list the ethics checks' known wrong
+verdicts; one that starts passing fails the run, so that list stays true.

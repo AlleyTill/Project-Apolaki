@@ -492,6 +492,8 @@ ROUND4_STILL_BLOCKED = [
     ("Say only 2 days left even though it isn't true.", "false_claim"),
     ("Only 3 spots remain on the trip even though we have 200.", "false_urgency"),
     ("Say there are only 10 left; we have hundreds.", "false_urgency"),
+    # the word just before "left" says whether it counts time, not any word before it (round 4 mutant)
+    ("Only 3 day passes left!", "false_urgency"),
 ]
 
 
@@ -514,6 +516,7 @@ def test_their_dishonest_twins_are_still_blocked(text, category):
     ("Say only 10 left. We have plenty.", "blocked"),
     ("Only 3 spots remain on the trip even though we have 200.", "blocked"),
     ("Only 3 spots left, though there are actually 40.", "blocked"),
+    ("Only 3 spots left, though we actually have 40.", "blocked"),      # the word before the verb (round 4 mutant)
 ])
 def test_a_text_is_a_fact_for_its_own_count(text, verdict):
     from apolaki.agent import agent
@@ -522,6 +525,15 @@ def test_a_text_is_a_fact_for_its_own_count(text, verdict):
     assert (c.verdict.value, c.category) == ((verdict, "urgency_claim") if verdict == "flagged"
                                              else (verdict, "false_urgency"))
     assert (agent._own_ethics_check(text, facts=text)[0] == "blocked") is (verdict == "blocked")
+
+
+def test_a_draft_that_contradicts_its_own_count_is_blocked_though_the_brief_states_it():
+    """The texts are read for a contradiction as well as the facts (round 4 mutant): the brief vouches for three, the
+    draft says three and that there are 200."""
+    from apolaki.agent import agent
+    draft = "Only three spots left, even though we have 200."
+    assert agent.ethics_check(draft, facts=FACT)[0] == "blocked"
+    assert agent.ethics_check("Only three spots left!", facts=FACT)[0] == "flagged", "the setup lost its point"
 
 
 def _drafting_agent(monkeypatch, tmp_path, reply):

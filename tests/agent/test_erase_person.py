@@ -1260,3 +1260,54 @@ def test_every_blob_is_read_in_each_wide_encoding(home):
         blob = head + "Call Marisol Quintero.".encode(encoding)
         assert named(blob) and not named(blob, wide=False), (encoding, head)
     assert [t for t, _ in X._readings("Marisol Quintero", hit)] == ["Marisol Quintero"] and X._readings(None, hit) == []
+
+
+def test_a_wide_reading_keeps_what_can_stand_in_the_name(home):
+    """_readings on its own (round 4 mutants): in a wide reading, printable ASCII (escapes), a separator, what folds to
+    nothing, a letter past U+FFFF and the parts of a composed letter all stay; the rest, a vector's or a run of zeros'
+    noise, reads as one NUL a run."""
+    import unicodedata
+    from apolaki.agent import erase as X
+
+    def named(name, text, encoding="utf-16-le"):
+        hit = X._matcher([name])
+        return any(X._names_in(hit, t, fold=f) for t, f in X._readings(text.encode(encoding), hit))
+    bs = chr(92)
+    maria = "Mar" + chr(0xED) + "a L" + chr(0xF3) + "pez"
+    assert named(maria, "Call Mar" + bs + "u00eda L" + bs + "u00f3pez today.")       # escapes are written in ASCII
+    assert named(PERSON, "Call Marisol" + chr(0x2013) + "Quintero today.")              # an en dash between the parts
+    assert named(PERSON, "Call Mari" + chr(0x200B) + "sol Quintero today.")             # a zero-width space in a part
+    assert named(PERSON, "Call " + chr(0x1D40C) + "arisol Quintero.", "utf-32-le")      # a mathematical M, past U+FFFF
+    korean = chr(0xAE40) + chr(0xBBFC) + chr(0xC218)
+    assert named(korean, unicodedata.normalize("NFD", "Met " + korean + " today."))     # Hangul written as its jamo
+    lv_t = chr(0xAE30) + chr(0x11B7)        # a syllable and a final jamo, which compose to the name's first syllable
+    assert named(korean, "Met " + lv_t + korean[1:] + " today.")
+    hit = X._matcher([PERSON])
+    for blob in (fake_embed("Brand voice: plain and warm.").tobytes(), bytes(3072)):
+        wide = sum(len(t) for t, _ in X._readings(blob, hit)) - len(X._cell_text(blob) or "")
+        assert wide * 4 < sum(map(len, X._wide_texts(blob))), wide
+
+
+def test_the_check_after_the_erase_reads_wide_text_too(home):
+    """_traces, the check's row reading, on its own: the dry run's reading would hide a miss here."""
+    from apolaki.agent import erase as X
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE notes (id TEXT PRIMARY KEY, body BLOB)")
+    con.execute("INSERT INTO notes VALUES ('a1', ?)", ("Call Marisol Quintero.".encode("utf-16-le"),))
+    assert X._traces(con, X._matcher([PERSON])) == [("notes", "body", "a1")]
+
+
+def test_a_near_match_in_wide_text_is_listed_once(home):
+    """UTF-16 text is read whole at one start and all but its first letter at the next, in the other byte order: the
+    near-match in it is one word to rule on, listed once."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store("Marisol Quintero leads the tenant union.")
+    s.close()
+    con = raw_db(home)
+    con.execute("CREATE TABLE notes (id TEXT PRIMARY KEY, body BLOB)")
+    con.execute("INSERT INTO notes VALUES ('n1', ?)", (("Call " + QUINTEROVA).encode("utf-16-le"),))
+    con.commit()
+    con.close()
+    p = X.plan(PERSON)
+    assert [n["word"] for n in p.near] == ["marisol quinterova"], X.describe(p)

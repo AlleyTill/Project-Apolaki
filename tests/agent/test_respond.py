@@ -339,9 +339,10 @@ def test_a_message_whose_count_it_contradicts_never_reaches_the_model(monkeypatc
     ("Here's a draft. Should I include an #ad disclosure?", "No, nobody paid us, it's our own project"),
     ("Here's a draft. Should I include an #ad disclosure?", "No, it isn't sponsored."),
     ("Here's a draft. Should I include an #ad disclosure?", "No, we weren't paid for it."),
+    ("Here's a draft. Should I include an #ad disclosure?", "No, it was unpaid."),
     ("Here's a draft. Should I add a disclaimer at the end?", "no"),
     ("Draft ready. Do you want me to include a medical disclaimer?", "No thanks, keep it short"),
-], ids=["nobody paid", "isn't sponsored", "weren't paid", "a disclaimer", "a medical disclaimer"])
+], ids=["nobody paid", "isn't sponsored", "weren't paid", "unpaid", "a disclaimer", "a medical disclaimer"])
 def test_no_to_the_models_question_is_honest_when_nothing_needs_disclosing(monkeypatch, question, answer):
     from apolaki.agent import agent as A
     calls = scripted_chat(monkeypatch, A, [question, CLEAN_REPLY])
