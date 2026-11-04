@@ -42,8 +42,10 @@ What it removes:
     included, each with its embedding (the row's blob and its vector-index entry). A blob counts as text unless it
     reads as an embedding's float numbers (all under 128; text in another encoding doesn't), so a name in a blob of
     Latin-1 text is found; and every blob is read as UTF-16 and UTF-32 as well, in either byte order, with a byte-order
-    mark or without (round 4), so a name stored in one of those is found too. The vector indexes' chunks are the one
-    exception: they hold copies of the rows' embeddings, and the erase drops and refills them from the rows;
+    mark or without (round 4), so a name stored in one of those is found too, and so is every text cell that holds a
+    NUL or another control character, which is how such text in a TEXT cell reads back (round 5), and that text with
+    its NULs taken out. The vector indexes' chunks are the one exception: they hold copies of the rows' embeddings, and
+    the erase drops and refills them from the rows;
   - the person's entity rows (an entity whose name contains the person's, such as "Dr. María López", counts), every
     mention row and triple that names them or touches them or an erased memory, and every other entity left with no
     memory behind it, since it came only from what was erased;
@@ -73,7 +75,9 @@ What it can't do:
   - find the person by anything but the name and aliases given. A nickname, initials, a pronoun, a role ("our board
     chair"), a misspelling or the parts in another order ("Quintero, Marisol") isn't found; list such variants as
     aliases, and read what each finds in the dry run. The byte check of the database files doesn't take markup out,
-    nor read UTF-16 or UTF-32 (the rows are read with markup taken out, and in both).
+    nor read UTF-16 or UTF-32 (the rows are read with markup taken out, and in both: every blob, and every text cell
+    with a control character in it; a text cell of wide text that has none, such as UTF-16 of a Chinese name alone,
+    whose bytes happen to be valid UTF-8, is not).
   - erase by a name shorter than three letters (a two-character Chinese name included): it would match inside too much.
   - keep the rest of a memory. A memory that names the person goes whole, with whatever else it said; the dry run
     shows each one, so a person can store again what should stay, without the name.
@@ -435,19 +439,40 @@ def _utf32(raw: bytes, little: bool) -> str:
     return clean.decode("utf-32-le" if little else "utf-32-be", errors="replace")
 
 
-def _wide_texts(value) -> list[str]:
-    """A blob's readings in the wide encodings (_WIDE), each from each starting byte within one character; [] for
-    anything else."""
-    if not isinstance(value, (bytes, memoryview)):
+# Wide text can sit in a TEXT cell too (round 5: the round 4 verifier found a false success there). CAST(... AS TEXT)
+# keeps its bytes, and Python reads them back as UTF-8 when they are valid: an ASCII name in UTF-16 or UTF-32 comes back
+# with a NUL between its letters, a Cyrillic one in UTF-16 with control characters; a writer that read the bytes as
+# Latin-1 stores each byte as a character. Such a str holds a NUL or another control character, which text doesn't (a
+# tab, a line feed and a carriage return don't count, so ordinary text isn't read wide, which would slow every erase).
+_WIDE_TEXT_HINT = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _wide_bytes(value) -> list[bytes]:
+    """The bytes a cell's wide readings start from: a blob's own; a str's UTF-8 bytes (what CAST stored) and, when
+    every character fits, its Latin-1 bytes, when it holds a control character (_WIDE_TEXT_HINT); [] for anything
+    else."""
+    if isinstance(value, (bytes, memoryview)):
+        return [bytes(value)]
+    if not isinstance(value, str) or not _WIDE_TEXT_HINT.search(value):
         return []
-    raw, out = bytes(value), []
-    for encoding, width in _WIDE:
-        for start in range(width):
-            end = start + (len(raw) - start) // width * width
-            if end > start:
-                unit = raw[start:end]
-                out.append(_utf32(unit, encoding.endswith("le")) if width == 4
-                           else unit.decode(encoding, errors="replace"))
+    out = [value.encode("utf-8")]
+    if not value.isascii() and max(value) <= "\xff":
+        out.append(value.encode("latin-1"))
+    return out
+
+
+def _wide_texts(value) -> list[str]:
+    """A cell's readings in the wide encodings (_WIDE), from each of its _wide_bytes, each from each starting byte
+    within one character; [] for a cell that has none."""
+    out = []
+    for raw in _wide_bytes(value):
+        for encoding, width in _WIDE:
+            for start in range(width):
+                end = start + (len(raw) - start) // width * width
+                if end > start:
+                    unit = raw[start:end]
+                    out.append(_utf32(unit, encoding.endswith("le")) if width == 4
+                               else unit.decode(encoding, errors="replace"))
     return out
 
 
@@ -472,13 +497,15 @@ def _noise(pattern: str) -> re.Pattern:
 
 
 def _readings(value, hit: re.Pattern, wide: bool = True) -> list[tuple[str, object]]:
-    """(text, fold) for each reading of a cell: _cell_text's, folded as text is (_fold), and unless wide is False the
-    wide ones, each run of _noise read as one NUL and folded in C (_fold_fast), since normalize() in Python takes
+    """(text, fold) for each reading of a cell: _cell_text's, folded as text is (_fold), and with its NULs taken out
+    when it holds one (a NUL between the letters, or between the parts of the name, round 5); and unless wide is False
+    the wide ones, each run of _noise read as one NUL and folded in C (_fold_fast), since normalize() in Python takes
     seconds a million characters."""
     text = _cell_text(value)
     noise = _noise(hit.pattern)
-    return ([(text, _fold)] if text else []) + [(noise.sub("\x00", t), _fold_fast)
-                                                for t in (_wide_texts(value) if wide else ())]
+    plain = [text, text.replace("\x00", "")] if text and "\x00" in text else [text] if text else []
+    return [(t, _fold) for t in plain] + [(noise.sub("\x00", t), _fold_fast)
+                                          for t in (_wide_texts(value) if wide else ())]
 
 
 def _vector_chunk_tables(con) -> set[str]:

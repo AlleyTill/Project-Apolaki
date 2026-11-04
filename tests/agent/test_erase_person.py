@@ -1247,18 +1247,24 @@ def test_a_name_in_a_wide_text_blob_on_a_memory_takes_the_memory(home, encoding,
 
 
 def test_every_blob_is_read_in_each_wide_encoding(home):
-    """_readings on its own: a vector (an embedding's float numbers) is read in them too; it holds the name or not."""
+    """_readings on its own: a vector (an embedding's float numbers) is read in them too; it holds the name or not.
+    Since round 5 a blob's text with its NULs taken out finds ASCII or Latin-1 text in UTF-16 and UTF-32 as well, so
+    Cyrillic text, which that doesn't reveal, shows the wide readings are what find it."""
     from apolaki.agent import erase as X
     hit = X._matcher([PERSON])
 
-    def named(value, wide=True):
+    def named(value, wide=True, hit=hit):
         return any(X._names_in(hit, t, fold=f) for t, f in X._readings(value, hit, wide=wide))
     vector = fake_embed("Brand voice: plain and warm.").tobytes()
     assert X._is_vector(vector) and X._cell_text(vector) is None, "the setup lost its point"
     assert len(X._readings(vector, hit)) == 12 and not named(vector)
+    cyrillic, text = WIDE_TEXTS[2]
     for encoding, head in WIDE:
         blob = head + "Call Marisol Quintero.".encode(encoding)
-        assert named(blob) and not named(blob, wide=False), (encoding, head)
+        assert named(blob), (encoding, head)
+        blob = head + text.encode(encoding)
+        assert named(blob, hit=X._matcher([cyrillic])) and not named(blob, wide=False, hit=X._matcher([cyrillic])), (
+            encoding, head)
     assert [t for t, _ in X._readings("Marisol Quintero", hit)] == ["Marisol Quintero"] and X._readings(None, hit) == []
 
 
@@ -1311,3 +1317,151 @@ def test_a_near_match_in_wide_text_is_listed_once(home):
     con.close()
     p = X.plan(PERSON)
     assert [n["word"] for n in p.near] == ["marisol quinterova"], X.describe(p)
+
+
+# ---- round 5: wide text in a TEXT cell (2026-11-04 verifier, round 4: a false success) -----------------------------
+# CAST(... AS TEXT) keeps a wide text's bytes, and Python reads them back as UTF-8 when they are valid: an ASCII name in
+# UTF-16 or UTF-32 comes back with a NUL between its letters, and a Cyrillic one in UTF-16 with control characters and
+# no NUL in the name at all. A writer that read the bytes as Latin-1 stores each byte as a letter. Before round 5 only
+# a blob was read in the wide encodings, and the erase recorded verified:true with the name's bytes still there.
+def cast(text, encoding):
+    return "CAST(? AS TEXT)", text.encode(encoding)
+
+
+def as_latin1(text, encoding):
+    return "?", text.encode(encoding).decode("latin-1")
+
+
+CYRILLIC = WIDE_TEXTS[2]
+WIDE_TEXT_CELLS = [(cast, "utf-16-le", WIDE_TEXTS[0]),           # the verifier's first case
+                   (as_latin1, "utf-16-le", WIDE_TEXTS[0]),      # the verifier's second case
+                   (cast, "utf-16-be", WIDE_TEXTS[0]), (cast, "utf-32-le", WIDE_TEXTS[0]),
+                   (cast, "utf-32-be", WIDE_TEXTS[0]), (as_latin1, "utf-32-le", WIDE_TEXTS[0]),
+                   (as_latin1, "utf-16-le", WIDE_TEXTS[1]),      # accented: CAST of these bytes isn't valid UTF-8
+                   (as_latin1, "utf-32-be", WIDE_TEXTS[1]),
+                   (cast, "utf-16-le", CYRILLIC), (cast, "utf-16-be", CYRILLIC), (as_latin1, "utf-16-le", CYRILLIC)]
+WIDE_TEXT_IDS = [f"{form.__name__}-{e}-{['ascii', 'accented', 'cyrillic'][WIDE_TEXTS.index(t)]}"
+                 for form, e, t in WIDE_TEXT_CELLS]
+
+
+@pytest.mark.parametrize("form,encoding,name_text", WIDE_TEXT_CELLS, ids=WIDE_TEXT_IDS)
+def test_a_name_in_wide_text_in_a_text_cell_of_a_hand_added_table_is_refused(home, form, encoding, name_text):
+    from apolaki.agent import erase as X
+    name, text = name_text
+    s = open_store(home)
+    s.store(f"{name} leads the tenant union.")
+    s.close()
+    sql, value = form(text, encoding)
+    con = raw_db(home)
+    con.execute("CREATE TABLE att2 (id TEXT, body TEXT)")
+    con.execute(f"INSERT INTO att2 VALUES ('a1', {sql})", (value,))
+    con.commit()
+    [(kind,)] = con.execute("SELECT typeof(body) FROM att2").fetchall()
+    con.close()
+    assert kind == "text", "the setup lost its point"
+    p = X.plan(name)
+    assert p.db_other == [{"table": "att2", "column": "body", "rows": 1}], X.describe(p)
+    with pytest.raises(X.EraseError, match="Nothing was removed"):
+        X.erase(name, confirm=p.code, by="x", reason="asked")
+
+
+@pytest.mark.parametrize("form,encoding", [(as_latin1, "utf-32-le"), (cast, "utf-32-le"), (cast, "utf-16-le"),
+                                           (as_latin1, "utf-16-be")],
+                         ids=["latin1-utf-32-le (the verifier's third)", "cast-utf-32-le (the verifier's fourth)",
+                              "cast-utf-16-le", "latin1-utf-16-be"])
+def test_a_name_in_wide_text_in_a_text_column_on_a_memory_takes_the_memory(home, form, encoding):
+    """A hand-added TEXT column on memories is a column of the memory: the memory goes whole, and the bytes with it."""
+    from apolaki.agent import erase as X
+    name, text = WIDE_TEXTS[0]
+    s = open_store(home)
+    s.store(f"{name} leads the tenant union.")
+    kept = s.store("Unrelated note about the garden.")
+    s.close()
+    sql, value = form(text, encoding)
+    con = raw_db(home)
+    con.execute("ALTER TABLE memories ADD COLUMN note TEXT")
+    con.execute(f"UPDATE memories SET note = {sql} WHERE id = ?", (value, kept))
+    con.commit()
+    con.close()
+    p = X.plan(name)
+    assert kept in [m["id"] for m in p.memories], X.describe(p)
+    X.erase(name, confirm=p.code, by="x", reason="asked")
+    raw = b"".join(f.read_bytes() for f in (home / "db").iterdir() if f.is_file())
+    assert name.encode(encoding) not in raw and "Quintero".encode(encoding) not in raw
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is True
+
+
+def test_a_wide_text_blob_in_the_content_column_takes_the_memory(home):
+    """The verifier's fifth case, which round 4 already handled: the memory's own text, as a UTF-16 blob."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store("Marisol Quintero leads the tenant union.")
+    kept = s.store("Unrelated note about the garden.")
+    s.close()
+    con = raw_db(home)
+    con.execute("UPDATE memories SET content = ? WHERE id = ?", ("Call Marisol Quintero".encode("utf-16-le"), kept))
+    con.commit()
+    con.close()
+    p = X.plan(PERSON)
+    assert kept in [m["id"] for m in p.memories], X.describe(p)
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    raw = b"".join(f.read_bytes() for f in (home / "db").iterdir() if f.is_file())
+    assert "Quintero".encode("utf-16-le") not in raw
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is True
+
+
+def test_a_text_cell_is_read_wide_only_when_it_holds_a_control_character(home):
+    """_readings on its own: a str with a NUL or another control character is read in the wide encodings, as its UTF-8
+    bytes and, when every character fits, its Latin-1 bytes, and with its NULs taken out; tab, line feed and carriage
+    return, which ordinary text holds, don't make it wide (every cell read so would slow every erase)."""
+    from apolaki.agent import erase as X
+    hit = X._matcher([PERSON])
+
+    def named(value):
+        return any(X._names_in(hit, t, fold=f) for t, f in X._readings(value, hit))
+    for encoding, _ in WIDE[:6]:
+        utf8 = "Call Marisol Quintero.".encode(encoding).decode("utf-8")
+        assert named(utf8) and named("Call Marisol Quintero.".encode(encoding).decode("latin-1")), encoding
+    maria = WIDE_TEXTS[1][0]
+    assert X._matcher([maria]).search(X._fold(maria)), "the setup lost its point"
+    for encoding in ("utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be"):
+        latin1 = WIDE_TEXTS[1][1].encode(encoding).decode("latin-1")
+        assert any(X._names_in(X._matcher([maria]), t, fold=f)
+                   for t, f in X._readings(latin1, X._matcher([maria]))), encoding
+    cyrillic = CYRILLIC[1].encode("utf-16-le").decode("utf-8")
+    assert "\x00" not in cyrillic[cyrillic.index("\x1c"):cyrillic.index("\x1c") + 10], "the setup lost its point"
+    assert any(X._names_in(X._matcher([CYRILLIC[0]]), t, fold=f) for t, f in X._readings(cyrillic,
+                                                                                          X._matcher([CYRILLIC[0]])))
+    assert named("Call Marisol\x00Quintero.") and named("Call M\x00a\x00r\x00i\x00s\x00o\x00l Quintero.")
+
+    def finds(name, value):
+        return any(X._names_in(X._matcher([name]), t, fold=f) for t, f in X._readings(value, X._matcher([name])))
+    alone = CYRILLIC[0].split()[0]          # one Cyrillic word: in UTF-16 it holds control characters but no NUL
+    assert "\x00" not in alone.encode("utf-16-le").decode("utf-8") and finds(alone, alone.encode("utf-16-le").decode(
+        "utf-8")), "a control character other than NUL makes a text cell wide"
+    # a Cyrillic and a Thai word whose only control characters in UTF-16 are 0x04, and 0x0e and a line feed
+    for word in ("\u0421\u0432\u0435\u0442\u043b\u0430\u043d\u0430", "\u0e2a\u0e21\u0e0a\u0e32\u0e22"):
+        assert finds(word, word.encode("utf-16-le").decode("utf-8")), word
+    greek = "\u0395\u03bb\u03ad\u03bd\u03b7 \u039c\u03b1\u03c1\u03ba\u03bf\u03c5"     # bytes past 0x7f: Latin-1 only
+    assert finds(greek, ("Met " + greek).encode("utf-16-le").decode("latin-1"))
+    tamil = "\u0bae\u0bc1\u0bb0\u0bc1\u0b95\u0ba9\u0bcd"           # a vertical tab (0x0b) its only control character
+    assert finds(tamil, tamil.encode("utf-16-le").decode("latin-1"))
+    assert finds(CYRILLIC[0], "\x00".join(CYRILLIC[1]))             # past Latin-1, a NUL between every letter
+    # 12 wide readings from each source of bytes: ASCII text has one (its UTF-8 and Latin-1 bytes are the same), text
+    # within Latin-1 two, text past it one (it has no Latin-1 bytes)
+    assert [len(X._wide_texts(v)) for v in ("Call\x00Marisol", "Caf\u00e9\x00 au lait",
+                                            "\u041c\x00 Marisol")] == [12, 24, 12]
+    for plain in ("Marisol Quintero", "Line one\nLine two\tthree\r\n", "Caf\u00e9 \u041c\u0430\u0440\u0438\u044f"):
+        assert [t for t, _ in X._readings(plain, hit)] == [plain], repr(plain)
+
+
+def test_the_check_after_the_erase_reads_wide_text_in_a_text_cell_too(home):
+    """_traces, the check's row reading, on its own: the dry run's reading would hide a miss here."""
+    from apolaki.agent import erase as X
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT)")
+    con.execute("INSERT INTO notes VALUES ('a1', CAST(? AS TEXT))", ("Call Marisol Quintero.".encode("utf-32-le"),))
+    con.execute("INSERT INTO notes VALUES ('a2', ?)", ("Call Marisol Quintero.".encode("utf-16-be").decode("latin-1"),))
+    assert X._traces(con, X._matcher([PERSON])) == [("notes", "body", "a1"), ("notes", "body", "a2")]
