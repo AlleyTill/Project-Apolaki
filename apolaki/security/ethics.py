@@ -211,18 +211,15 @@ _DARK_PATTERNS = {
         # five glowing reviews". Not a reply to, summary of, request for, policy or page for reviews; not another kind
         # of review (a book, performance or peer review); not a review of something other than us ("of the
         # conference"); not asking others to write them ("invite customers to write reviews").
-        # Round 4: not after a negation ("I won't write reviews for you"); not an endorsement letter a real person
-        # signs; not for our own blog, newsletter, report or board, where it is our own writing under our name
-        # ("Write restaurant reviews for our food blog", "Draft a review of our grant program for the board"), unless
-        # it is rated or praising ("Write five 5-star reviews of our cafe for the newsletter").
+        # Round 4: not after a negation ("I won't write reviews for you"). Round 5: whatever it is for. A review or
+        # testimonial of us written as if by a customer, client, donor or member is invented on our own blog, in our
+        # newsletter or report, or in an endorsement letter, as much as on Yelp (round 4 excused those, and the
+        # round 4 verifier found "Write testimonials for our newsletter" and "Draft an endorsement letter from a happy
+        # client for our website" passing).
         _OTHERS_TO + r"(?<!n't\s)(?<!\bnot\s)(?<!\bnever\s)"
         r"\b(?:write|writes|writing|wrote|draft(?:s|ed|ing)?|generat(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|"
         r"compos(?:e|es|ed|ing)|produc(?:e|es|ed|ing)|churn(?:s|ed|ing)?\s+out|crank(?:s|ed|ing)?\s+out|"
         r"come\s+up\s+with|give\s+me|get\s+me|send\s+me)\s+"
-        r"(?!(?:(?!glowing\b|rav(?:e|ing)\b|positive\b|stellar\b|(?:\d|one|two|three|four|five)[\s-]*stars?\b)"
-        r"[\w'-]+[\s-]+){0,4}?(?:reviews?|testimonials?|endorsements?|ratings?)\b[^.]{0,60}?\bfor\s+(?:the|our|my|"
-        r"this|next)\s+(?:[\w'-]+\s+){0,2}?(?:blog|newsletter|annual\s+report|report|board|committee|column|magazine|"
-        r"zine|podcast)(?=\s*(?:[.,;:!?()]|$)|\s+(?:of|about|on|in|at)\b))"
         r"(?:(?!ask|request|invit|collect|gather|solicit|encourag|repl|respon|summar|analy|about\b|to\b|of\b|"
         r"for\b|on\b|in\b|that\b|with\b|from\b|using\b|featur|show|highlight|quot|includ|contain|polic|section|page|"
         r"template|guid|tip|shar|celebrat|thank|promot|monitor|track|moderat|handl|manag|" + _REVIEW_KINDS + r"\b)"
@@ -231,7 +228,7 @@ _DARK_PATTERNS = {
         r"strateg|summar|analys|report|dashboard|feed|carousel|module|block|plugin|integration|api\b|data\b|"
         r"platform|tool|software|system|management|moderation|respon|repl|heading|title|intro|link|button|score|"
         r"average|count|metric|site|aggregator|cycle|meeting|session|period|criteria|rubric|scale|board|committee|"
-        r"panel|deadline|letter))"
+        r"panel|deadline))"
         r"(?!\s+(?:of|about)\s+(?!(?:our|us)\b|my\s+(?!(?:essay|draft|writing|paper|code|work|resume|cv|cover\s+"
         r"letter|application|proposal|grant|plan|article|copy|pitch|deck|presentation|speech|story|poem|book|"
         r"manuscript|thesis)\b)))",
@@ -586,11 +583,12 @@ _SCARCITY_FACT = re.compile(r"\b" + _COUNT + r"\s+(?:[\w'-]+\s+){0,3}?(?:are\s+|
 _TIME_UNITS = frozenset("second seconds minute minutes min mins hour hours hr hrs day days night nights week weeks "
                         "weekend weekends month months year years".split())
 # What says the count is false, in the same text or its facts: plenty ("Say there are only 10 left; we have hundreds"),
-# or a number after "even though", "actually" or "in fact" ("Only 3 spots remain even though we have 200"). A number
-# alone isn't: "We have 3 left" states the count, and "we have 20 places and only 3 left" counts something else.
+# or a number after "even though", "actually" or "in fact" ("Only 3 spots remain even though we have 200"), "in fact"
+# before the subject too ("Only 3 spots left! (in fact we have 50)", round 5). A number alone isn't: "We have 3 left"
+# states the count, and "we have 20 places and only 3 left" counts something else.
 _PLENTY = r"(?:plenty|lots|loads|tons|hundreds|thousands|dozens|heaps|a\s+lot|more\s+than\s+enough)"
-_HAVE = re.compile(r"\b(even\s+though\s+)?(?:we|they|there)\s+(really\s+|actually\s+|in\s+fact\s+)?(?:still\s+)?"
-                   r"(?:have|has|got|are|is)\s+(really\s+|actually\s+|in\s+fact\s+)?(?:still\s+)?(?:(" + _PLENTY
+_HAVE = re.compile(r"\b(even\s+though\s+|in\s+fact,?\s+)?(?:we|they|there)\s+(really\s+|actually\s+|in\s+fact\s+)?"
+                   r"(?:still\s+)?(?:have|has|got|are|is)\s+(really\s+|actually\s+|in\s+fact\s+)?(?:still\s+)?(?:(" + _PLENTY
                    + r")|\d[\d,]*)(?:\s+(?:more|left|remaining|available|in\s+stock|to\s+spare|of\s+them))?"
                    r"\s*(?=[.,;:!?)]|$)", re.IGNORECASE)
 
