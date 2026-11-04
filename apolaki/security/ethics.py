@@ -213,11 +213,16 @@ _DARK_PATTERNS = {
         # conference"); not asking others to write them ("invite customers to write reviews").
         # Round 4: not after a negation ("I won't write reviews for you"); not an endorsement letter a real person
         # signs; not for our own blog, newsletter, report or board, where it is our own writing under our name
-        # ("Write restaurant reviews for our food blog", "Draft a review of our grant program for the board").
+        # ("Write restaurant reviews for our food blog", "Draft a review of our grant program for the board"), unless
+        # it is rated or praising ("Write five 5-star reviews of our cafe for the newsletter").
         _OTHERS_TO + r"(?<!n't\s)(?<!\bnot\s)(?<!\bnever\s)"
         r"\b(?:write|writes|writing|wrote|draft(?:s|ed|ing)?|generat(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|"
         r"compos(?:e|es|ed|ing)|produc(?:e|es|ed|ing)|churn(?:s|ed|ing)?\s+out|crank(?:s|ed|ing)?\s+out|"
         r"come\s+up\s+with|give\s+me|get\s+me|send\s+me)\s+"
+        r"(?!(?:(?!glowing\b|rav(?:e|ing)\b|positive\b|stellar\b|(?:\d|one|two|three|four|five)[\s-]*stars?\b)"
+        r"[\w'-]+[\s-]+){0,4}?(?:reviews?|testimonials?|endorsements?|ratings?)\b[^.]{0,60}?\bfor\s+(?:the|our|my|"
+        r"this|next)\s+(?:[\w'-]+\s+){0,2}?(?:blog|newsletter|annual\s+report|report|board|committee|column|magazine|"
+        r"zine|podcast)(?=\s*(?:[.,;:!?()]|$)|\s+(?:of|about|on|in|at)\b))"
         r"(?:(?!ask|request|invit|collect|gather|solicit|encourag|repl|respon|summar|analy|about\b|to\b|of\b|"
         r"for\b|on\b|in\b|that\b|with\b|from\b|using\b|featur|show|highlight|quot|includ|contain|polic|section|page|"
         r"template|guid|tip|shar|celebrat|thank|promot|monitor|track|moderat|handl|manag|" + _REVIEW_KINDS + r"\b)"
@@ -229,9 +234,7 @@ _DARK_PATTERNS = {
         r"panel|deadline|letter))"
         r"(?!\s+(?:of|about)\s+(?!(?:our|us)\b|my\s+(?!(?:essay|draft|writing|paper|code|work|resume|cv|cover\s+"
         r"letter|application|proposal|grant|plan|article|copy|pitch|deck|presentation|speech|story|poem|book|"
-        r"manuscript|thesis)\b)))"
-        r"(?![^.]{0,60}?\bfor\s+(?:the|our|my|this|next)\s+(?:[\w'-]+\s+){0,2}?(?:blog|newsletter|annual\s+report|"
-        r"report|board|committee|column|magazine|zine|podcast)(?=\s*(?:[.,;:!?()]|$)|\s+(?:of|about|on|in|at)\b))",
+        r"manuscript|thesis)\b)))",
         # Words written now to be credited to a persona later: "Draft a few testimonials we can attribute to donors".
         r"\b(?:write|writes|writing|draft\w*|creat\w*|generat\w*|compos\w*|make\s+up|invent\w*|come\s+up\s+with)\b"
         r"[^.]{0,40}?\b(?:quotes?|testimonials?|reviews?|endorsements?|statements?|comments?)\b[^.]{0,20}?"

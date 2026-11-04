@@ -71,8 +71,10 @@ approve.
   sponsored", that answer is taken as true. A disclaimer of another kind ("a medical disclaimer?" "No thanks") is not
   read as a disclosure at all. If something was paid for, it still needs "#ad".
 - **A review for our own blog, newsletter, report or board**: "Write restaurant reviews for our food blog", "Draft a
-  review of our grant program for the board". These are our own writing under our own name. They are not reviews of
-  us in a customer's voice; if a draft reads like one, don't approve it.
+  review of our grant program for the board". These are our own writing under our own name, and pass. A rated or
+  praising one ("five 5-star reviews of our cafe for the newsletter", "a glowing review of our cafe for our blog") is
+  still blocked. A plain one about us ("Write a review of our cafe for our blog") passes: if a draft reads like a
+  customer's review of us, don't approve it.
 
 ## 3. The ethics checks: honest work they still block
 
