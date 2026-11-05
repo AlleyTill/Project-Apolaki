@@ -156,11 +156,20 @@ Also:
 - Rows are read in UTF-16 and UTF-32 as well as UTF-8, but not every row: every blob is, and every text cell that
   holds a NUL or another control character (tab and line breaks aside), which is how wide text written into a text
   column with CAST(... AS TEXT) reads back (round 5; round 4 read only blobs, and such a cell gave a false success).
-  One case is still open: a text cell holding wide text with no such character, which happens when it is only
-  letters of a script like Chinese, with no space or punctuation, whose UTF-16 bytes are by chance valid UTF-8 with
-  no control character. The erase then reports success with the name still there. Reading every text cell wide
-  would close it, at about eight times the time for each cell. Apolaki's own code stores text as UTF-8; a table or
-  column added by hand could hold wide text.
+  **Open, and wider than one script: the erase can report success with the name still in the database** when a
+  table or column added by hand holds the name as wide text (UTF-16 or UTF-32) in a text cell that has no NUL or
+  other control character the check looks for. Two ways this happens:
+  - a single-word name in **Devanagari (Hindi, Marathi, Nepali), Gurmukhi (Punjabi) or Malayalam**, stored as UTF-16:
+    in those scripts the high byte of every character is a tab, line feed or carriage return, which the check
+    deliberately ignores (48 of 48 planted cases gave a false success);
+  - a name in a script such as Chinese, with no space or punctuation, whose UTF-16 bytes happen to be valid UTF-8
+    with no control character.
+
+  Apolaki's own code stores text as UTF-8, so this needs a table or column someone added by hand and filled with
+  wide text. **If your database has tables or columns Apolaki didn't create, don't rely on the erase report: check
+  those by hand.** The planned fix is for erase to certify only Apolaki's own tables and to ask a person to confirm
+  whenever it finds hand-added ones. Reading every text cell wide would also close it, at about eight times the time
+  for each cell.
 - The final byte-by-byte check of the database files reads UTF-8 only. The database is compacted with deleted bytes
   zeroed, so this matters only if that compaction failed, which the erase reports.
 - On a test store of 1,500 memories with the alias "Ana", the round 3 version ended "ERASE INCOMPLETE" in two runs of

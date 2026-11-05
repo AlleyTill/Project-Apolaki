@@ -76,8 +76,9 @@ What it can't do:
     chair"), a misspelling or the parts in another order ("Quintero, Marisol") isn't found; list such variants as
     aliases, and read what each finds in the dry run. The byte check of the database files doesn't take markup out,
     nor read UTF-16 or UTF-32 (the rows are read with markup taken out, and in both: every blob, and every text cell
-    with a control character in it; a text cell of wide text that has none, such as UTF-16 of a Chinese name alone,
-    whose bytes happen to be valid UTF-8, is not).
+    with a control character in it; a text cell of wide text that has none is not: UTF-16 of a single-word Devanagari,
+    Gurmukhi or Malayalam name, whose high bytes are tab, line feed or carriage return, which the hint ignores; or
+    UTF-16 of a Chinese name alone, whose bytes happen to be valid UTF-8. See docs/KNOWN_LIMITS.md section 5).
   - erase by a name shorter than three letters (a two-character Chinese name included): it would match inside too much.
   - keep the rest of a memory. A memory that names the person goes whole, with whatever else it said; the dry run
     shows each one, so a person can store again what should stay, without the name.
