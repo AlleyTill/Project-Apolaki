@@ -41,11 +41,11 @@ What it removes:
   - every memory with a column that names the person (text, tags, source, archive_reason, any column), archived ones
     included, each with its embedding (the row's blob and its vector-index entry). A blob counts as text unless it
     reads as an embedding's float numbers (all under 128; text in another encoding doesn't), so a name in a blob of
-    Latin-1 text is found; and every blob is read as UTF-16 and UTF-32 as well, in either byte order, with a byte-order
-    mark or without (round 4), so a name stored in one of those is found too, and so is every text cell that holds a
-    NUL or another control character, which is how such text in a TEXT cell reads back (round 5), and that text with
-    its NULs taken out. The vector indexes' chunks are the one exception: they hold copies of the rows' embeddings, and
-    the erase drops and refills them from the rows;
+    Latin-1 text is found; and every blob and every text cell is read as UTF-16 and UTF-32 as well, in either byte
+    order, with a byte-order mark or without (blobs since round 4, text cells since round A; round 5 read only a text
+    cell with a control character in it), so a name stored in one of those is found too, and a text cell with a NUL in
+    it is read with its NULs taken out. The vector indexes' chunks are the one exception: they hold copies of the rows'
+    embeddings, and the erase drops and refills them from the rows;
   - the person's entity rows (an entity whose name contains the person's, such as "Dr. María López", counts), every
     mention row and triple that names them or touches them or an erased memory, and every other entity left with no
     memory behind it, since it came only from what was erased;
@@ -60,6 +60,17 @@ dealt with it. So is a TEXT cell whose bytes aren't valid UTF-8 (written with CA
 writing another encoding), whether or not it seems to name the person, since what it says can't be read with
 certainty: the dry run lists it, and the erase refuses (EraseUnreadable, exit code 4) until a person rewrites or
 removes it. Before round A such a cell stopped the dry run with a Python error.
+
+It certifies only Apolaki's own schema (round A): the tables and columns memory_store makes, the vector indexes'
+tables (as the sqlite-vec loaded here makes them) and SQLite's own counters. Every other table, every column added to
+one of Apolaki's tables, and every view and trigger is listed in the dry run as not Apolaki's, whatever it holds, and
+the erase refuses until a person has checked each by hand and names each with --checked (exactly as the dry run
+prints it: "table:NAME", "column:TABLE.COLUMN", "view:NAME", "trigger:NAME"): a table or column for the name in any
+form, a trigger for what it copies when the erase deletes rows (it fires then). The erase still reads those tables and
+columns, and refuses on a name it finds there; the person's check covers what it can't read (another encoding, base64,
+a compressed or encrypted value). The record and the command line then read "verified for Apolaki's tables; N
+hand-added ... checked by a person". An index isn't listed: it holds only its own table's values, which go with their
+rows.
 Then it rebuilds the vector indexes from what remains, VACUUMs the database (with secure_delete on, so the deleted rows
 are zeroed even if VACUUM can't run) and truncates its write-ahead log. Its check reads every text column of every
 table again; reads back every byte of the database files (folding case, accents, look-alike letters and invisible
@@ -69,7 +80,8 @@ kept row, or by chance inside a kept vector; reads the wiki folder and the engin
 again, which must find nothing to remove or refuse on and no near-match nobody ruled on. If the name or an erased
 embedding is still there, or VACUUM or the log truncation failed, that is an error (EraseIncomplete), never a success.
 
-The dry run gives a code, a hash of exactly what it found, near-matches included. The erase runs only with that code,
+The dry run gives a code, a hash of exactly what it found, near-matches and what isn't Apolaki's included. The erase
+runs only with that code,
 so what is removed is what a person read; if anything changed in between, the code doesn't match and nothing is
 removed. Each erase is recorded in $APOLAKI_HOME/erasures.jsonl: who, why, when, how much, and each near-match ruled
 someone else (where it is), never the name.
@@ -78,10 +90,9 @@ What it can't do:
   - find the person by anything but the name and aliases given. A nickname, initials, a pronoun, a role ("our board
     chair"), a misspelling or the parts in another order ("Quintero, Marisol") isn't found; list such variants as
     aliases, and read what each finds in the dry run. The byte check of the database files doesn't take markup out,
-    nor read UTF-16 or UTF-32 (the rows are read with markup taken out, and in both: every blob, and every text cell
-    with a control character in it; a text cell of wide text that has none is not: UTF-16 of a single-word Devanagari,
-    Gurmukhi or Malayalam name, whose high bytes are tab, line feed or carriage return, which the hint ignores; or
-    UTF-16 of a Chinese name alone, whose bytes happen to be valid UTF-8. See docs/KNOWN_LIMITS.md section 5).
+    nor read UTF-16 or UTF-32 (the rows are read with markup taken out, and in both). See docs/KNOWN_LIMITS.md
+    section 5.
+  - certify a table, column, view or trigger Apolaki's code didn't make: a person checks those (above).
   - erase by a name shorter than three letters (a two-character Chinese name included): it would match inside too much.
   - keep the rest of a memory. A memory that names the person goes whole, with whatever else it said; the dry run
     shows each one, so a person can store again what should stay, without the name.
@@ -465,6 +476,8 @@ _KEEP_UNIT = bytes([0xFF, 0x00]) + bytes(254)
 
 def _utf32(raw: bytes, little: bool) -> str:
     """raw, a whole number of units, as UTF-32, each unit past U+10FFFF read as NUL (a surrogate as U+FFFD)."""
+    if b"\x00" not in raw:          # every unit's top byte is not 0, so every unit is past U+10FFFF (round A: most text)
+        return "\x00" * (len(raw) // 4)
     top, mid = (raw[3::4], raw[2::4]) if little else (raw[0::4], raw[1::4])
     past = int.from_bytes(top.translate(_PAST_TOP), "big") | int.from_bytes(mid.translate(_PAST_MID), "big")
     keep = past.to_bytes(len(top), "big").translate(_KEEP_UNIT)
@@ -477,19 +490,23 @@ def _utf32(raw: bytes, little: bool) -> str:
 
 # Wide text can sit in a TEXT cell too (round 5: the round 4 verifier found a false success there). CAST(... AS TEXT)
 # keeps its bytes, and Python reads them back as UTF-8 when they are valid: an ASCII name in UTF-16 or UTF-32 comes back
-# with a NUL between its letters, a Cyrillic one in UTF-16 with control characters; a writer that read the bytes as
-# Latin-1 stores each byte as a character. Such a str holds a NUL or another control character, which text doesn't (a
-# tab, a line feed and a carriage return don't count, so ordinary text isn't read wide, which would slow every erase).
-_WIDE_TEXT_HINT = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
-
-
+# with a NUL between its letters, a Cyrillic one in UTF-16 with control characters, a single Devanagari, Gurmukhi or
+# Malayalam word with tabs, line feeds or carriage returns, a Chinese one as plain ASCII ("POPO(g" is UTF-16 of a
+# three-character name); a writer that read the bytes as Latin-1 stores each byte as a character. Round 5 read a str
+# wide only when it held a control character other than those three, which left the Indic and Chinese cases a false
+# success (round 5's verifier: 48 of 48 Indic plants). Since round A every text cell is read wide. On a test store of
+# 1,500 memories with the vector indexes (CPU time, the least of three runs on a busy machine), the dry run took 6.8 s
+# against 6.1 s before and the check's reading of the rows 5.6 s against 3.8 s, since the readings that can't hold a name
+# are dropped before they are folded (_readings, _utf32) and _scan folds each reading once for both of its searches.
 def _wide_bytes(value) -> list[bytes]:
-    """The bytes a cell's wide readings start from: a blob's own; a str's UTF-8 bytes (what CAST stored) and, when
-    every character fits, its Latin-1 bytes, when it holds a control character (_WIDE_TEXT_HINT); [] for anything
-    else."""
+    """The bytes a cell's wide readings start from: a blob's own; a TEXT cell that isn't valid UTF-8 (_Undecodable),
+    its stored bytes; any other str's UTF-8 bytes (what CAST stored) and, when every character fits, its Latin-1
+    bytes; [] for anything else."""
     if isinstance(value, (bytes, memoryview)):
         return [bytes(value)]
-    if not isinstance(value, str) or not _WIDE_TEXT_HINT.search(value):
+    if isinstance(value, _Undecodable):
+        return [value.raw]
+    if not isinstance(value, str) or not value:
         return []
     out = [value.encode("utf-8")]
     if not value.isascii() and max(value) <= "\xff":
@@ -536,12 +553,13 @@ def _readings(value, hit: re.Pattern, wide: bool = True) -> list[tuple[str, obje
     """(text, fold) for each reading of a cell: _cell_text's, folded as text is (_fold), and with its NULs taken out
     when it holds one (a NUL between the letters, or between the parts of the name, round 5); and unless wide is False
     the wide ones, each run of _noise read as one NUL and folded in C (_fold_fast), since normalize() in Python takes
-    seconds a million characters."""
+    seconds a million characters. A wide reading that is all noise holds no letter of the name and is dropped (most of
+    them: ASCII read as UTF-16 is ideographs, and text without a NUL byte has no UTF-32 unit below U+10FFFF)."""
     text = _cell_text(value)
     noise = _noise(hit.pattern)
     plain = [text, text.replace("\x00", "")] if text and "\x00" in text else [text] if text else []
-    return [(t, _fold) for t in plain] + [(noise.sub("\x00", t), _fold_fast)
-                                          for t in (_wide_texts(value) if wide else ())]
+    wides = [noise.sub("\x00", t) for t in (_wide_texts(value) if wide else ())]
+    return [(t, _fold) for t in plain] + [(t, _fold_fast) for t in wides if t.strip("\x00")]
 
 
 def _vector_chunk_tables(con) -> set[str]:
@@ -564,15 +582,17 @@ def _scan(con, hit: re.Pattern, loose: re.Pattern) -> tuple[list, list, list]:
             for c in cols:
                 if isinstance(rec.get(c), _Undecodable):
                     unreadable.append((table, c, key))
-                readings = _readings(rec.get(c), hit, wide=table not in chunks)
-                if any(_names_in(hit, text, fold=fold) for text, fold in readings):
+                named, words = False, []
+                for text, fold in _readings(rec.get(c), hit, wide=table not in chunks):
+                    folded = [fold(v) for v in _variants(text)]      # once for both searches (_names_in, _near_words)
+                    named = named or any(hit.search(f) for f in folded)
+                    for f in folded:
+                        for w in _near_in(hit, loose, f):
+                            if w not in words:
+                                words.append(w)
+                                nears.append((table, c, key, w, text))
+                if named:
                     traces.append((table, c, key))
-                words: list[str] = []
-                for text, fold in readings:
-                    for w in _near_words(hit, loose, text, fold=fold):
-                        if w not in words:
-                            words.append(w)
-                            nears.append((table, c, key, w, text))
     return traces, nears, unreadable
 
 
@@ -664,6 +684,7 @@ class Plan:
     unreadable: list[dict] = field(default_factory=list)    # {"table", "column", "rows"}: TEXT that isn't valid UTF-8
     schema: list[dict] = field(default_factory=list)        # {"type", "name", "where"}: schema objects that name them
     near: list[dict] = field(default_factory=list)          # {"word", "place", "text"}: kept, until a person rules
+    hand_added: list[dict] = field(default_factory=list)    # {"kind", "name", "token"}: not Apolaki's, a person checks
     vec_tables: list[str] = field(default_factory=list)
     code: str = ""
 
@@ -676,6 +697,10 @@ class Plan:
 
     def near_words(self) -> list[str]:
         return sorted({n["word"] for n in self.near})
+
+    def checks(self) -> list[str]:
+        """The --checked tokens the erase needs: one for each thing in the database Apolaki didn't create."""
+        return [h["token"] for h in self.hand_added]
 
     def empty(self) -> bool:
         return not any(self.counts().values())
@@ -702,6 +727,64 @@ def _load_vec(con) -> bool:
         return True
     except Exception:  # noqa: BLE001 - absent or unloadable: the caller refuses if vec tables exist
         return False
+
+
+# SQLite's own bookkeeping, which holds table names and numbers, never a row's text: AUTOINCREMENT's counters (sqlite-vec
+# uses them) and ANALYZE's statistics. sqlite_stat4 isn't here: it keeps samples of indexed values, which are text, and
+# isn't cleared when their rows are deleted.
+_SQLITE_OWN = frozenset({("table", "sqlite_sequence", None), ("table", "sqlite_stat1", None),
+                         *(("column", t, c) for t, cs in (("sqlite_sequence", ("name", "seq")),
+                                                          ("sqlite_stat1", ("tbl", "idx", "stat"))) for c in cs)})
+
+
+def _objects(con) -> set[tuple[str, str, str | None]]:
+    """The schema as (type, name, None) for each table, index, view and trigger, and ("column", table, column) for each
+    column of each table. A virtual table whose module isn't loaded here has no columns to read: it counts by its
+    name alone."""
+    out = set()
+    for kind, name in con.execute("SELECT type, name FROM sqlite_master").fetchall():
+        out.add((kind, name, None))
+        if kind == "table":
+            try:
+                out |= {("column", name, r[1]) for r in con.execute(f"PRAGMA table_info({_q(name)})")}
+            except sqlite3.Error:
+                pass
+    return out
+
+
+@functools.lru_cache(maxsize=2)
+def _own_schema(with_vec: bool) -> frozenset:
+    """Apolaki's own schema (_objects), made in memory by memory_store's own statements, and with_vec the vector
+    indexes too: sqlite-vec makes their tables itself, and which it makes depends on its version, so they are read from
+    what the version loaded here makes, never listed by hand."""
+    from .memory_store import ARCHIVED_INDEX, SCHEMA, VEC_SCHEMA
+    con = sqlite3.connect(":memory:")
+    try:
+        con.executescript(SCHEMA)
+        con.execute(ARCHIVED_INDEX)
+        if with_vec:
+            if not _load_vec(con):          # the database's own connection loaded it, so this isn't expected
+                raise EraseError("sqlite-vec loaded for the database but not for the schema it is compared with")
+            for sql in VEC_SCHEMA:
+                con.execute(sql)
+        return frozenset(_objects(con)) | _SQLITE_OWN
+    finally:
+        con.close()
+
+
+def _hand_added(con, with_vec: bool) -> list[dict]:
+    """What the database holds beyond Apolaki's own schema (_own_schema): each table, view and trigger, and each column
+    of one of Apolaki's tables, that its code didn't make, as {"kind", "name", "token"}; the token is what a person
+    passes to --checked. A column of a table added by hand is the table's; an index holds only its own table's values,
+    which go with their rows, so none is listed (a name in an index's name or definition is a schema trace)."""
+    own = _own_schema(with_vec)
+    out = []
+    for kind, name, col in sorted(_objects(con) - own, key=lambda o: (o[0], o[1], o[2] or "")):
+        if kind == "column" and ("table", name, None) in own:
+            out.append({"kind": "column", "name": f"{name}.{col}", "token": f"column:{name}.{col}"})
+        elif kind in ("table", "view", "trigger"):
+            out.append({"kind": kind, "name": name, "token": f"{kind}:{name}"})
+    return out
 
 
 def _open(db: Path, readonly: bool):
@@ -761,6 +844,7 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
                 bad[(table, col)] = bad.get((table, col), 0) + 1
             out.unreadable = [{"table": t, "column": c, "rows": n} for (t, c), n in sorted(bad.items())]
             out.schema, schema_nears = _schema(con, hit, loose)
+            out.hand_added = _hand_added(con, with_vec=bool(out.vec_tables))
             in_table: dict[str, set] = {}
             for table, _, key in traces:
                 in_table.setdefault(table, set()).add(key)
@@ -879,7 +963,7 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
              "entities": [e["id"] for e in out.entities], "mentions": out.mentions, "triples": out.triples,
              "wiki_pages": out.wiki_pages, "wiki_files": out.wiki_files, "beliefs": out.beliefs,
              "belief_log_lines": out.belief_log_lines, "db_other": out.db_other, "schema": out.schema,
-             "unreadable": out.unreadable,
+             "unreadable": out.unreadable, "hand_added": out.checks(),
              "near": sorted(json.dumps([n["word"], n["place"]], sort_keys=True, default=str) for n in out.near)}
     out.code = hashlib.sha256(json.dumps(ident, sort_keys=True).encode()).hexdigest()[:12]
     return out
@@ -968,13 +1052,18 @@ def leftovers(names: list[str], home: Path, blobs: list[bytes] = (), others: tup
 
 
 def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str = "", reason: str = "",
-          home: Path | None = None, not_them: tuple[str, ...] = ()) -> dict:
-    """Remove what plan() lists, if confirm is its code. Returns {"code", "counts", "elsewhere", "near", "ledger"}.
+          home: Path | None = None, not_them: tuple[str, ...] = (), checked: tuple[str, ...] = ()) -> dict:
+    """Remove what plan() lists, if confirm is its code. Returns {"code", "counts", "elsewhere", "near", "checked",
+    "ledger"}.
 
     not_them is a person's ruling on the plan's near-matches (the name inside a longer word, in what is kept): each word
     named there is someone else, and stays. It must name every near-match word the plan lists and nothing else, or the
     erase refuses before changing anything. A near-match that is the person is given as an alias instead, which erases
-    it. The ledger records each ruled near-match by where it is, never by the word, which contains the name."""
+    it. The ledger records each ruled near-match by where it is, never by the word, which contains the name.
+
+    checked is a person's word that they have checked, by hand, each table, column, view and trigger the plan lists as
+    not Apolaki's (Plan.checks()) for the name in any form: the erase certifies only Apolaki's own schema (round A). It
+    must name each of them and nothing else, or the erase refuses before changing anything."""
     home = home or config.home()
     if not by.strip():
         raise EraseError("say who is erasing (by)")
@@ -1010,6 +1099,16 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
                          f"name inside a longer word, in something the erase keeps). Nothing was removed. If each is "
                          f"someone else, name it with --not-them WORD; if it is the person, give it as an --alias and "
                          f"run the dry run again")
+    given, wanted = {c.strip() for c in checked if c.strip()}, set(p.checks())
+    if given - wanted:
+        raise EraseError(f"--checked names {len(given - wanted)} thing(s) the dry run didn't list as added by hand "
+                         f"(each must be named exactly as the dry run prints it). Nothing was removed")
+    if wanted - given:
+        raise EraseError(f"the database holds {len(wanted - given)} thing(s) Apolaki didn't create, which nobody has "
+                         f"said they checked: {', '.join(sorted(wanted - given))}. This erase certifies only Apolaki's "
+                         f"own tables: it reads the others too, but text can be stored there in ways it doesn't read. "
+                         f"Nothing was removed. A person checks each by hand for the name in any form, deals with what "
+                         f"they find, then names each with --checked, exactly as the dry run prints it")
     names = p.names
     hit, loose = _matcher(names), _matcher(names, edges=False)
     paths = _paths(home)
@@ -1093,6 +1192,7 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
             else value
     record = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "by": unnamed(by.strip()),
               "reason": unnamed(reason.strip()), "code": p.code, "counts": p.counts(), "verified": not left,
+              "verified_for": "Apolaki's own tables", "checked_by_person": [unnamed(t) for t in p.checks()],
               "problems": problems, "other_files_naming_them": len(p.elsewhere),
               "near_matches": [{"place": {k: unnamed(v) for k, v in n["place"].items()}, "ruling": "someone else"}
                                for n in p.near]}
@@ -1102,7 +1202,7 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
         raise EraseIncomplete("the erase ran, but its check still reads the name or an erased embedding, or a step "
                               "that clears deleted bytes failed: " + "; ".join(left))
     return {"code": p.code, "counts": p.counts(), "elsewhere": p.elsewhere, "near": len(p.near),
-            "ledger": str(paths["ledger"])}
+            "checked": p.checks(), "ledger": str(paths["ledger"])}
 
 
 def _redacted_line(line: str, hit: re.Pattern) -> str:
@@ -1129,7 +1229,9 @@ def describe(p: Plan) -> str:
     """The dry run, for a person to read."""
     lines = [f"Erase {' / '.join(repr(n) for n in p.names)}: a dry run. Nothing has been changed."]
     if p.empty():
-        lines.append("Apolaki's memory holds nothing under these names.")
+        lines.append("Apolaki's memory holds nothing under these names" + (
+            " in its own tables; what was added by hand (below) is for a person to check." if p.hand_added
+            else "."))
     if p.memories:
         lines.append(f"\nMemories that go whole ({len(p.memories)}), with their embeddings:")
         lines += [f"  {m['id'][:8]}{' (archived)' if m['archived'] else ''}: {' '.join(m['text'].split())[:110]}"
@@ -1160,6 +1262,13 @@ def describe(p: Plan) -> str:
         lines.append(f"\nIn the database's schema ({len(p.schema)}), which this command doesn't change, so the erase "
                      f"WILL REFUSE until a person renames or drops these:")
         lines += [f"  {s['type']} {s['name']!r}: its {s['where']}" for s in p.schema]
+    if p.hand_added:
+        lines.append(f"\nNot Apolaki's ({len(p.hand_added)}): tables, columns, views and triggers its code didn't make. "
+                     f"This erase reads them, but certifies only Apolaki's own tables, since text can be stored in "
+                     f"them in ways it doesn't read (base64, say). The erase WILL REFUSE until a person has checked "
+                     f"each by hand (a table or column for the name in any form; a view or trigger for what it reads, "
+                     f"and a trigger for what it copies when the erase deletes rows), and names each with --checked:")
+        lines += [f"  {h['kind']} {h['name']!r}: --checked {h['token']!r}" for h in p.hand_added]
     if p.near:
         lines.append(f"\nNear-matches ({len(p.near)}): the name inside a longer word, in what this erase keeps. The "
                      f"erase WILL REFUSE until a person rules on each word: someone else (--not-them WORD), or the "
@@ -1179,6 +1288,9 @@ def describe(p: Plan) -> str:
         aliases = "".join(f" --alias {a!r}" for a in p.names[1:])
         lines.append(f"\nTo erase exactly this: python -m apolaki.engine erase-person {p.names[0]!r}{aliases} "
                      f"--confirm {p.code} --by WHO --reason WHY")
+        if p.hand_added:
+            lines.append("  with, only once a person has checked each thing above that Apolaki didn't create: "
+                         + " ".join(f"--checked {t!r}" for t in p.checks()))
         if p.near:
             lines.append("  with, only if a person has read each near-match above and it is someone else: "
                          + " ".join(f"--not-them {w!r}" for w in p.near_words()))

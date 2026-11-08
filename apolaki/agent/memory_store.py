@@ -164,6 +164,23 @@ MIGRATION_COLUMNS = (
     ("archive_reason", "TEXT"),
 )
 
+# Made after the migration, since a database that predates it has no archived column to index.
+ARCHIVED_INDEX = "CREATE INDEX IF NOT EXISTS idx_memories_archived ON memories(archived)"
+
+# The vector indexes, made where sqlite-vec loads. The erase (apolaki.agent.erase) builds this schema, SCHEMA and
+# ARCHIVED_INDEX in memory to know which tables and columns are Apolaki's own, so they are kept here, in one place.
+VEC_SCHEMA = ("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS memory_vec USING vec0(
+                    id TEXT PRIMARY KEY,
+                    embedding float[768]
+                )
+            """, """
+                CREATE VIRTUAL TABLE IF NOT EXISTS entity_vec USING vec0(
+                    id TEXT PRIMARY KEY,
+                    embedding float[768]
+                )
+            """)
+
 RELEVANT_ENTITY_TYPES = {
     "PERSON", "ORG", "GPE", "EVENT", "PRODUCT",
     "WORK_OF_ART", "FAC", "NORP", "LOC", "LAW"
@@ -244,7 +261,7 @@ class ApolakiMemoryStore:
             if col not in cols:
                 logger.info("migrating memories: adding column %s", col)
                 self.conn.execute(f"ALTER TABLE memories ADD COLUMN {col} {decl}")
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_archived ON memories(archived)")
+        self.conn.execute(ARCHIVED_INDEX)
         self.conn.commit()
 
     def _init_vec(self):
@@ -252,18 +269,8 @@ class ApolakiMemoryStore:
             import sqlite_vec
             self.conn.enable_load_extension(True)
             sqlite_vec.load(self.conn)
-            self.conn.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS memory_vec USING vec0(
-                    id TEXT PRIMARY KEY,
-                    embedding float[768]
-                )
-            """)
-            self.conn.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS entity_vec USING vec0(
-                    id TEXT PRIMARY KEY,
-                    embedding float[768]
-                )
-            """)
+            for sql in VEC_SCHEMA:
+                self.conn.execute(sql)
             self.conn.commit()
             self._vec_enabled = True
         except Exception as e:

@@ -1058,7 +1058,7 @@ def test_a_ledger_place_that_names_the_person_is_recorded_without_it(home):
     con.close()
     p = X.plan(PERSON)
     assert [n["place"] for n in p.near] == [{"table": "handles", "column": "id", "row": "marisolquinterova"}]
-    X.erase(PERSON, confirm=p.code, by="x", reason="asked", not_them=("marisolquinterova",))
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked", not_them=("marisolquinterova",), checked=("table:handles",))
     [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
     assert rec["near_matches"] == [{"place": {"table": "handles", "column": "id", "row": "[erased]"},
                                     "ruling": "someone else"}]
@@ -1239,7 +1239,8 @@ def test_a_name_in_a_wide_text_blob_on_a_memory_takes_the_memory(home, encoding,
     con.close()
     p = X.plan(name)
     assert kept in [m["id"] for m in p.memories], X.describe(p)
-    X.erase(name, confirm=p.code, by="x", reason="asked")
+    assert p.checks() == ["column:memories.attachment"]
+    X.erase(name, confirm=p.code, by="x", reason="asked", checked=p.checks())
     raw = b"".join(f.read_bytes() for f in (home / "db").iterdir() if f.is_file())
     assert name.encode(encoding) not in raw and "L\u00f3pez".encode(encoding) not in raw
     [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
@@ -1257,7 +1258,8 @@ def test_every_blob_is_read_in_each_wide_encoding(home):
         return any(X._names_in(hit, t, fold=f) for t, f in X._readings(value, hit, wide=wide))
     vector = fake_embed("Brand voice: plain and warm.").tobytes()
     assert X._is_vector(vector) and X._cell_text(vector) is None, "the setup lost its point"
-    assert len(X._readings(vector, hit)) == 12 and not named(vector)
+    # 12 wide readings are made; since round A a reading that is all noise (no letter of the name) isn't kept
+    assert len(X._wide_texts(vector)) == 12 and 0 < len(X._readings(vector, hit)) <= 12 and not named(vector)
     cyrillic, text = WIDE_TEXTS[2]
     for encoding, head in WIDE:
         blob = head + "Call Marisol Quintero.".encode(encoding)
@@ -1265,7 +1267,7 @@ def test_every_blob_is_read_in_each_wide_encoding(home):
         blob = head + text.encode(encoding)
         assert named(blob, hit=X._matcher([cyrillic])) and not named(blob, wide=False, hit=X._matcher([cyrillic])), (
             encoding, head)
-    assert [t for t, _ in X._readings("Marisol Quintero", hit)] == ["Marisol Quintero"] and X._readings(None, hit) == []
+    assert X._readings("Marisol Quintero", hit)[0] == ("Marisol Quintero", X._fold) and X._readings(None, hit) == []
 
 
 def test_a_wide_reading_keeps_what_can_stand_in_the_name(home):
@@ -1385,7 +1387,8 @@ def test_a_name_in_wide_text_in_a_text_column_on_a_memory_takes_the_memory(home,
     con.close()
     p = X.plan(name)
     assert kept in [m["id"] for m in p.memories], X.describe(p)
-    X.erase(name, confirm=p.code, by="x", reason="asked")
+    assert p.checks() == ["column:memories.note"]
+    X.erase(name, confirm=p.code, by="x", reason="asked", checked=p.checks())
     raw = b"".join(f.read_bytes() for f in (home / "db").iterdir() if f.is_file())
     assert name.encode(encoding) not in raw and "Quintero".encode(encoding) not in raw
     [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
@@ -1412,10 +1415,11 @@ def test_a_wide_text_blob_in_the_content_column_takes_the_memory(home):
     assert rec["verified"] is True
 
 
-def test_a_text_cell_is_read_wide_only_when_it_holds_a_control_character(home):
-    """_readings on its own: a str with a NUL or another control character is read in the wide encodings, as its UTF-8
-    bytes and, when every character fits, its Latin-1 bytes, and with its NULs taken out; tab, line feed and carriage
-    return, which ordinary text holds, don't make it wide (every cell read so would slow every erase)."""
+def test_a_text_cell_is_read_wide(home):
+    """_readings on its own: a str is read in the wide encodings, as its UTF-8 bytes and, when every character fits,
+    its Latin-1 bytes, and with its NULs taken out when it holds one. Round 5 read a str wide only when it held a
+    control character other than tab, line feed and carriage return; since round A every one is (the Indic and Chinese
+    cases below)."""
     from apolaki.agent import erase as X
     hit = X._matcher([PERSON])
 
@@ -1454,7 +1458,14 @@ def test_a_text_cell_is_read_wide_only_when_it_holds_a_control_character(home):
     assert [len(X._wide_texts(v)) for v in ("Call\x00Marisol", "Caf\u00e9\x00 au lait",
                                             "\u041c\x00 Marisol")] == [12, 24, 12]
     for plain in ("Marisol Quintero", "Line one\nLine two\tthree\r\n", "Caf\u00e9 \u041c\u0430\u0440\u0438\u044f"):
-        assert [t for t, _ in X._readings(plain, hit)] == [plain], repr(plain)
+        assert [t for t, _ in X._readings(plain, hit)][0] == plain and len(X._wide_texts(plain)) >= 12, repr(plain)
+    # what round 5 didn't read: no control character but tab, line feed or carriage return (one Devanagari word in
+    # UTF-16), or none at all (a Chinese name in UTF-16, which is plain ASCII)
+    for name in INDIC + [CHINESE]:
+        for encoding in ("utf-16-le", "utf-16-be"):
+            cell = name.encode(encoding).decode("utf-8")
+            assert not re.search("[\x00-\x08\x0b\x0c\x0e-\x1f]", cell), "the setup lost its point"
+            assert finds(name, cell), (name, encoding)
 
 
 def test_the_check_after_the_erase_reads_wide_text_in_a_text_cell_too(home):
@@ -1523,3 +1534,136 @@ def test_the_check_after_the_erase_reports_a_text_cell_that_isnt_utf8(home):
     con.close()
     found = X.leftovers(["Dev Okafor"], home)
     assert any("column archive_reason: text that isn't valid UTF-8" in f for f in found), found
+
+
+# Item 1: the erase certifies only Apolaki's own schema. Round 5's verifier found a false success, verified:true with
+# the name still in the database, for UTF-16 of a single Devanagari, Gurmukhi or Malayalam word in a text cell (48 of 48
+# plants: every high byte is a tab, line feed or carriage return, which round 5's hint skipped) and of a Chinese name
+# (its UTF-16 is plain ASCII). Two parts close it: every text cell is read wide, and a table, column, view or trigger
+# Apolaki's code didn't make is listed and needs a person's check, whatever it holds.
+INDIC = ["\u092e\u094b\u0939\u0928", "\u0938\u0941\u0928\u0940\u0924\u093e",       # Devanagari
+         "\u0a2e\u0a4b\u0a39\u0a28", "\u0d2e\u0d4b\u0d39\u0d7b"]                         # Gurmukhi, Malayalam
+CHINESE = "\u4f50\u4f50\u6728"
+
+
+def hand_add(home, *statements, params=()):
+    con = raw_db(home)
+    for i, sql in enumerate(statements):
+        con.execute(sql, params[i] if i < len(params) else ())
+    con.commit()
+    con.close()
+
+
+def test_apolakis_own_schema_needs_no_persons_check(home):
+    """What memory_store makes, vector indexes included where sqlite-vec loads, and SQLite's own counters, is
+    Apolaki's: nothing to check. An old database the store migrated (archive columns added later) is Apolaki's too."""
+    from apolaki.agent import erase as X
+    plant(home)
+    p = X.plan(PERSON)
+    assert p.hand_added == [] and p.checks() == [] and "Not Apolaki's" not in X.describe(p)
+    old = home.parent / "old"
+    (old / "db").mkdir(parents=True)
+    con = sqlite3.connect(str(old / "db" / "apolaki.db"))
+    con.executescript(ms.SCHEMA.replace("    archived INTEGER DEFAULT 0,\n    archived_at TEXT,\n"
+                                        "    archive_reason TEXT\n", "    source_x TEXT\n").replace(
+        "    source TEXT DEFAULT '',\n    source_x TEXT", "    source TEXT DEFAULT ''"))
+    assert "archived" not in [r[1] for r in con.execute("PRAGMA table_info(memories)")], "the setup lost its point"
+    con.close()
+    ms.ApolakiMemoryStore(db_path=old / "db" / "apolaki.db", wiki_path=old / "wiki").close()
+    assert X.plan(PERSON, home=old).hand_added == []
+
+
+def test_what_apolaki_didnt_make_is_listed_and_the_erase_refuses_until_a_person_checks_each(home, capsys):
+    import apolaki.engine as E
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, "CREATE TABLE campaign_notes (id TEXT PRIMARY KEY, body TEXT)",
+             "INSERT INTO campaign_notes VALUES ('n1', 'Spring appeal: call the food bank.')",
+             "CREATE INDEX idx_campaign_notes_body ON campaign_notes(body)",
+             "ALTER TABLE memories ADD COLUMN note TEXT",
+             "CREATE VIEW recent AS SELECT id FROM memories",
+             "CREATE TRIGGER touched AFTER UPDATE ON memories BEGIN SELECT 1; END")
+    p = X.plan(PERSON)
+    assert p.checks() == ["column:memories.note", "table:campaign_notes", "trigger:touched", "view:recent"]
+    assert p.db_other == [] and p.counts() == X.plan(PERSON).counts()
+    text = X.describe(p)
+    assert "Not Apolaki's (4)" in text and "WILL REFUSE" in text and "--checked 'table:campaign_notes'" in text
+    before = snapshot(home)
+    for checked, match in [((), "nobody has said they checked: column:memories.note, table:campaign_notes, "
+                                "trigger:touched, view:recent"),
+                           (("table:campaign_notes",), "3 thing\\(s\\) Apolaki didn't create"),
+                           ((*p.checks(), "table:other"), "didn't list as added by hand")]:
+        with pytest.raises(X.EraseError, match=match):
+            X.erase(PERSON, confirm=p.code, by="x", reason="asked", checked=checked)
+        assert snapshot(home) == before and not (home / "erasures.jsonl").exists()
+    args = ["erase-person", PERSON, "--confirm", p.code, "--by", "x", "--reason", "asked"]
+    assert E.main(args) == 2 and "Apolaki didn't create" in capsys.readouterr().err
+    assert E.main(args + [a for t in p.checks() for a in ("--checked", t)]) == 0
+    assert "verified for Apolaki's tables; 4 hand-added table(s), column(s), view(s) or trigger(s) checked by a " \
+           "person" in capsys.readouterr().out
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is True and rec["verified_for"] == "Apolaki's own tables"
+    assert rec["checked_by_person"] == p.checks()
+
+
+def test_a_new_hand_added_table_alone_changes_the_code(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    code = X.plan(PERSON).code
+    hand_add(home, "CREATE TABLE scratch (x TEXT)")
+    assert X.plan(PERSON).code != code
+
+
+def test_a_name_in_a_hand_added_table_in_a_form_the_erase_cant_read_is_never_certified(home):
+    """The class, whatever the form: base64 of the name in a hand-added table isn't found (the erase decodes no
+    base64), but the table is listed, and the erase refuses until a person says they checked it. At b9bde2f this
+    erase recorded verified:true with the name still there."""
+    import base64
+    from apolaki.agent import erase as X
+    plant(home)
+    hidden = base64.b64encode(PERSON.encode()).decode()
+    hand_add(home, "CREATE TABLE attachments (id TEXT PRIMARY KEY, body TEXT)",
+             "INSERT INTO attachments VALUES ('a1', ?)", params=((), (hidden,)))
+    p = X.plan(PERSON)
+    assert p.db_other == [] and p.checks() == ["table:attachments"], X.describe(p)
+    with pytest.raises(X.EraseError, match="nobody has said they checked: table:attachments"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert db_rows(home, "SELECT body FROM attachments") == [(hidden,)]
+
+
+@pytest.mark.parametrize("name", INDIC + [CHINESE], ids=["devanagari", "devanagari-6", "gurmukhi", "malayalam",
+                                                         "chinese"])
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
+def test_wide_text_with_no_control_character_in_apolakis_own_column_is_found_and_erased(home, name, encoding):
+    """Round 5's false success, in one of Apolaki's own columns (a person wrote it there by hand), where no person's
+    check stands in: the cell is read wide, the memory goes, and its bytes with it. Before round A this was
+    verified:true with the bytes still there."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store(f"{name} leads the tenant union.")
+    kept = s.store("Unrelated note about the garden.")
+    s.close()
+    hand_add(home, "UPDATE memories SET source = CAST(? AS TEXT) WHERE id = ?", params=((name.encode(encoding), kept),))
+    [(source,)] = db_rows(home, f"SELECT source FROM memories WHERE id = '{kept}'")
+    assert not re.search("[\x00-\x08\x0b\x0c\x0e-\x1f]", source), "the setup lost its point"
+    p = X.plan(name)
+    assert kept in [m["id"] for m in p.memories] and p.checks() == [], X.describe(p)
+    X.erase(name, confirm=p.code, by="x", reason="asked")
+    raw = b"".join(f.read_bytes() for f in (home / "db").iterdir() if f.is_file())
+    assert name.encode(encoding) not in raw
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is True
+
+
+@pytest.mark.parametrize("name", INDIC[:1] + [CHINESE], ids=["devanagari", "chinese"])
+def test_wide_text_with_no_control_character_in_a_hand_added_table_is_found_and_refused(home, name):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store(f"{name} leads the tenant union.")
+    s.close()
+    hand_add(home, "CREATE TABLE att2 (id TEXT, body TEXT)", "INSERT INTO att2 VALUES ('a1', CAST(? AS TEXT))",
+             params=((), (name.encode("utf-16-le"),)))
+    p = X.plan(name)
+    assert p.db_other == [{"table": "att2", "column": "body", "rows": 1}] and p.checks() == ["table:att2"]
+    with pytest.raises(X.EraseError, match="Nothing was removed"):
+        X.erase(name, confirm=p.code, by="x", reason="asked", checked=p.checks())
