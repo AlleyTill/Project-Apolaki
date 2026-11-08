@@ -12,7 +12,12 @@ tasted as a reader sees it: comments and tags taken out, once as nothing ("Ig<b>
 ("previous<br>instructions"), then entities decoded ("Ignore&nbsp;all"), each as it is and normalised. The raw text
 is still tasted, so a chat-template token a reader's view would take out as a tag is caught there; and so is the raw
 text with its entities decoded and its tags kept, and the tags' attribute values as text (as_raw), since the model
-reads an attribute that a reader's view takes out ('<img alt="Ignore&nbsp;all previous instructions">').
+reads an attribute that a reader's view takes out ('<img alt="Ignore&nbsp;all previous instructions">'). Since round
+A every view decodes entities and percent-encoding again and again until nothing changes ("&amp;nbsp;", "%2520",
+"&#37;20"), so text escaped twice is read as a reader or a model would read it, and a text still changing after
+DECODE_PASSES passes is held for a person (UNSETTLED); a tag left open at the end of the text is closed first, an
+attribute value left open with it; and each tag is also read with its name and brackets taken out and its words kept
+in place (as_words), so "Ignore all <b previous instructions", whose words a browser hides as a tag's, is caught.
   - A hit quarantines the text for a person: $APOLAKI_HOME/quarantine/q_<sha256 prefix>.json holds the text, its
     sources, its kind, the patterns that fired and when it was seen. The same text seen again is the same entry
     (seen_count, sources), so a listing re-read every night doesn't raise a new alarm each time. Each event is a line
@@ -31,6 +36,8 @@ What it can't do:
     or an instruction split across texts screened separately gets through (apolaki.grants.intake.admit_listing
     screens all of a listing as one text, so a split inside one listing is seen). Garuda's second layer, an LLM
     judge, isn't vendored.
+  - decode what it doesn't know: a backslash escape ("\\u0069nstructions"), base64, rot13, a Markdown link between
+    the words, a tag left open anywhere but the end, or an instruction partly inside a <script> block.
   - tell discussion from attack. "jailbreak" in a call for AI-safety research is held like an attack, and a person
     releases it. Garuda's own design note: Layer 1 is deliberately aggressive, better to flag and release than miss.
   - screen text it isn't given. respond(), the interactive chat with the person at the keyboard, isn't screened.
@@ -47,6 +54,7 @@ import json
 import logging
 import re
 import sys
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,17 +105,79 @@ _HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
 _HTML_TAG = re.compile(r"</?[A-Za-z!?][^<>]*>")
 
 
+# Decoding can take more than one pass (round A): entities escaped twice ("&amp;nbsp;" is "&nbsp;", then a no-break
+# space), percent-encoding applied twice ("%2520"), an entity that writes a percent escape ("&#37;20") or the other way
+# round ("%26nbsp;"). Each pass that changes the text shortens it, so decoding settles; the cap bounds the work on a
+# text nested deeper than any reader would decode, and such a text is held for a person (UNSETTLED), never admitted.
+DECODE_PASSES = 16
+UNSETTLED = f"encoded more than {DECODE_PASSES} times over"
+
+
+def _decode(text: str) -> tuple[str, bool]:
+    """(the text with its HTML entities and percent-encoding decoded again and again until nothing changes, whether it
+    settled within DECODE_PASSES)."""
+    for _ in range(DECODE_PASSES):
+        t = urllib.parse.unquote(html.unescape(text))
+        if t == text:
+            return text, True
+        text = t
+    return text, False
+
+
+def _decoded(text: str) -> str:
+    return _decode(text)[0]
+
+
+# A tag left open at the end of the text ("Ignore all <b previous instructions"): a browser drops it, words and all,
+# while a model reads them. It is closed before the views below take tags out (round A): ">" added, after a quote
+# that closes an attribute value left open ('<img alt="Ignore all" title="previous instructions').
+_OPEN_TAG = re.compile(r"</?[A-Za-z!?][^<>]*\Z")
+
+
+def _closed(text: str) -> str:
+    m = _OPEN_TAG.search(text)
+    if not m:
+        return text
+    return text + next((q for q in ('"', "'") if m.group().count(q) % 2), "") + ">"
+
+
+def _encoded(text: str) -> bool:
+    return "<" in text or "&" in text or "%" in text
+
+
 def as_read(text: str) -> list[str]:
-    """The text as a reader of its HTML sees it: comments and tags taken out, as nothing and as a space (an inline tag
-    joins a word, a line break or a paragraph separates two), then HTML entities decoded. [] when that changes
-    nothing. Tags go before entities are decoded, as a browser reads them: "&lt;b&gt;" is text, not a tag."""
-    if "<" not in text and "&" not in text:
+    """The text as a reader of its HTML sees it: comments and tags taken out (a tag left open at the end closed first),
+    as nothing and as a space (an inline tag joins a word, a line break or a paragraph separates two), then HTML
+    entities and percent-encoding decoded until nothing changes. [] when that changes nothing. Tags go before entities
+    are decoded, as a browser reads them: "&lt;b&gt;" is text, not a tag."""
+    if not _encoded(text):
         return []
-    out = []
+    out, closed = [], _closed(text)
     for gap in ("", " "):
-        seen = html.unescape(_HTML_TAG.sub(gap, _HTML_COMMENT.sub(gap, text)))
+        seen = _decoded(_HTML_TAG.sub(gap, _HTML_COMMENT.sub(gap, closed)))
         if seen != text and seen not in out:
             out.append(seen)
+    return out
+
+
+# A tag: its name, and what it holds after the name.
+_TAG_PARTS = re.compile(r"</?[A-Za-z!?][^\s<>/]*([^<>]*)>")
+
+
+def as_words(text: str) -> list[str]:
+    """The text as a model reads the words inside its tags (round A): each tag's name and brackets taken out and what
+    it holds kept in place, so "Ignore all <b previous instructions" (left open, then closed) reads "Ignore all
+    previous instructions", which the reader's view loses whole. The same for the text decoded first, so a tag that
+    entities or percent-encoding wrote ("&amp;lt;b&amp;gt;") is taken out too; each decoded until nothing changes,
+    a tag taken as nothing and as a space. [] when that changes nothing."""
+    if not _encoded(text):
+        return []
+    out = []
+    for base in (_closed(text), _closed(_decoded(text))):
+        for gap in ("", " "):
+            seen = _decoded(_TAG_PARTS.sub(lambda m: gap + m.group(1) + gap, base))
+            if seen != text and seen not in out:
+                out.append(seen)
     return out
 
 
@@ -118,16 +188,17 @@ _ATTRIBUTE = re.compile(r"""[^\s"'<>/=]+\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>=
 def as_raw(text: str) -> list[str]:
     """The text as a model reading its raw HTML sees it (round 4: the reader's view takes a whole tag out before it
     decodes entities, so '<img alt="Ignore&nbsp;all previous instructions">' was admitted): the text with its entities
-    decoded and its tags kept, and every tag's attribute values, entities decoded, one after another as one text (so an
-    instruction split between two attributes is whole). [] when that changes nothing."""
-    if "<" not in text and "&" not in text:
+    and percent-encoding decoded until nothing changes and its tags kept, and every tag's attribute values (a tag left
+    open at the end closed first), decoded the same way, one after another as one text (so an instruction split
+    between two attributes is whole). [] when that changes nothing."""
+    if not _encoded(text):
         return []
     out = []
-    decoded = html.unescape(text)
+    decoded = _decoded(text)
     if decoded != text:
         out.append(decoded)
-    values = " ".join(html.unescape(next(v for v in m.groups() if v is not None))
-                      for tag in _HTML_TAG.finditer(text) for m in _ATTRIBUTE.finditer(tag.group()))
+    values = " ".join(_decoded(next(v for v in m.groups() if v is not None))
+                      for tag in _HTML_TAG.finditer(_closed(text)) for m in _ATTRIBUTE.finditer(tag.group()))
     if values and values not in out:
         out.append(values)
     return out
@@ -135,7 +206,8 @@ def as_raw(text: str) -> list[str]:
 
 def scan(text: str) -> list[str]:
     """Garuda Layer 1's patterns that fire on the text, on its normalised form, or on what a reader of its HTML sees
-    (as_read) or a model reading the raw HTML sees (as_raw), each as it is and normalised, in the order found."""
+    (as_read) or a model reading the raw HTML sees (as_raw, as_words), each as it is and normalised, in the order found;
+    and UNSETTLED when its decoding doesn't settle within DECODE_PASSES."""
     if not text:
         return []
     # The raw scan is kept so the screen never rests on normalize() alone. No text is known that it catches and the
@@ -143,8 +215,11 @@ def scan(text: str) -> list[str]:
     # for the same reason, and a mutant that drops that lives as well (round 3). The text as it came (raw and
     # normalised) is what catches a tag-shaped injection such as "<system>", which the reader's view takes out.
     flags = layer1(text)
-    for t in (normalize(text), *(v for seen in as_read(text) + as_raw(text) for v in (seen, normalize(seen)))):
+    views = dict.fromkeys(as_read(text) + as_raw(text) + as_words(text))       # each view once
+    for t in (normalize(text), *(v for seen in views for v in (seen, normalize(seen)))):
         flags += [p for p in layer1(t) if p not in flags]
+    if _encoded(text) and not _decode(text)[1]:
+        flags.append(UNSETTLED)
     return flags
 
 
