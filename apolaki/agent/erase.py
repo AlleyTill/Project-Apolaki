@@ -56,7 +56,10 @@ What it removes:
 The dry run reads every text column of every table in the database, and the schema (table, view, trigger and index
 names and definitions, column defaults included). A name in a table or column the erase doesn't remove from (a table
 added by hand, say), or in the schema, is listed, and the erase refuses before changing anything until a person has
-dealt with it.
+dealt with it. So is a TEXT cell whose bytes aren't valid UTF-8 (written with CAST(... AS TEXT), or by a program
+writing another encoding), whether or not it seems to name the person, since what it says can't be read with
+certainty: the dry run lists it, and the erase refuses (EraseUnreadable, exit code 4) until a person rewrites or
+removes it. Before round A such a cell stopped the dry run with a Python error.
 Then it rebuilds the vector indexes from what remains, VACUUMs the database (with secure_delete on, so the deleted rows
 are zeroed even if VACUUM can't run) and truncates its write-ahead log. Its check reads every text column of every
 table again; reads back every byte of the database files (folding case, accents, look-alike letters and invisible
@@ -126,6 +129,38 @@ class EraseError(RuntimeError):
 class EraseIncomplete(EraseError):
     """The erase ran, but its check found the name or an erased embedding still there, or a step that clears deleted
     bytes (VACUUM, the log truncation) failed. Recorded in the ledger as not verified."""
+
+
+class EraseUnreadable(EraseError):
+    """The erase was refused (nothing removed) because a text cell's bytes aren't valid UTF-8, so the name in it can't
+    be read with certainty. The command line exits 4 for this, apart from other refusals (2)."""
+
+
+class _Undecodable(str):
+    """A TEXT cell whose bytes aren't valid UTF-8 (written with CAST(... AS TEXT), or by a program writing another
+    encoding), read with each bad byte as U+FFFD, so the code that reads text can still read it; raw is the bytes as
+    stored."""
+    raw = b""
+
+
+def _text_cell(raw: bytes) -> str:
+    """The text factory of every connection the erase opens. sqlite3's own stops the whole read with an error at the
+    first TEXT cell that isn't valid UTF-8 (a Python traceback, exit 1, before round A); this reads that cell as an
+    _Undecodable instead, which the dry run lists and the erase refuses on."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        cell = _Undecodable(raw.decode("utf-8", errors="replace"))
+        cell.raw = raw
+        return cell
+
+
+def _connect(db: Path, readonly: bool):
+    con = sqlite3.connect(str(db), timeout=BUSY_TIMEOUT_S)
+    con.text_factory = _text_cell
+    if readonly:
+        con.execute("PRAGMA query_only = 1")
+    return con
 
 
 # Escapes, any number of backslashes deep (json.dumps of json.dumps doubles them): \uXXXX (surrogate pairs joined),
@@ -516,16 +551,19 @@ def _vector_chunk_tables(con) -> set[str]:
     return {t for t, _ in _tables(con) for v in vec if re.fullmatch(re.escape(v) + r"_vector_chunks\d+", t)}
 
 
-def _scan(con, hit: re.Pattern, loose: re.Pattern) -> tuple[list, list]:
-    """Every text cell, in every table (a blob that may be text counts, _cell_text): (traces, nears). A trace is
-    (table, column, key) for a cell that names the person; a near is (table, column, key, word, text) for each word in a
-    cell that holds the name inside a longer word. Vectors are left to the byte check, which reads every byte of the
-    database files."""
-    traces, nears = [], []
+def _scan(con, hit: re.Pattern, loose: re.Pattern) -> tuple[list, list, list]:
+    """Every text cell, in every table (a blob that may be text counts, _cell_text): (traces, nears, unreadable). A
+    trace is (table, column, key) for a cell that names the person; a near is (table, column, key, word, text) for each
+    word in a cell that holds the name inside a longer word; unreadable is (table, column, key) for a TEXT cell whose
+    bytes aren't valid UTF-8 (_Undecodable), which is read as best it can be and refused on. Vectors are left to the
+    byte check, which reads every byte of the database files."""
+    traces, nears, unreadable = [], [], []
     chunks = _vector_chunk_tables(con)
     for table, cols in _tables(con):
         for key, rec in _rows(con, table):
             for c in cols:
+                if isinstance(rec.get(c), _Undecodable):
+                    unreadable.append((table, c, key))
                 readings = _readings(rec.get(c), hit, wide=table not in chunks)
                 if any(_names_in(hit, text, fold=fold) for text, fold in readings):
                     traces.append((table, c, key))
@@ -535,7 +573,7 @@ def _scan(con, hit: re.Pattern, loose: re.Pattern) -> tuple[list, list]:
                         if w not in words:
                             words.append(w)
                             nears.append((table, c, key, w, text))
-    return traces, nears
+    return traces, nears, unreadable
 
 
 def _traces(con, hit: re.Pattern) -> list[tuple[str, str, object]]:
@@ -543,6 +581,12 @@ def _traces(con, hit: re.Pattern) -> list[tuple[str, str, object]]:
     chunks = _vector_chunk_tables(con)
     return [(t, c, k) for t, cols in _tables(con) for k, rec in _rows(con, t) for c in cols
             if any(_names_in(hit, text, fold=fold) for text, fold in _readings(rec.get(c), hit, wide=t not in chunks))]
+
+
+def _undecodable(con) -> list[tuple[str, str]]:
+    """(table, column) for each column, in every table, with a TEXT cell whose bytes aren't valid UTF-8."""
+    return sorted({(t, c) for t, cols in _tables(con) for _, rec in _rows(con, t) for c in cols
+                   if isinstance(rec.get(c), _Undecodable)})
 
 
 def _schema(con, hit: re.Pattern, loose: re.Pattern) -> tuple[list[dict], list]:
@@ -572,9 +616,8 @@ def _explained_bytes(db: Path, hit: re.Pattern, loose: re.Pattern, ruled: set[st
     out: set[tuple[str, int]] = set()
     if not db.is_file():
         return out
-    con = sqlite3.connect(str(db), timeout=BUSY_TIMEOUT_S)
+    con = _connect(db, readonly=True)
     try:
-        con.execute("PRAGMA query_only = 1")
         raws = [(r[0] or "").encode("utf-8") for r in con.execute("SELECT name FROM sqlite_master")]
         raws += [r[0].encode("utf-8") for r in con.execute("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL")]
         vectors = []
@@ -583,7 +626,7 @@ def _explained_bytes(db: Path, hit: re.Pattern, loose: re.Pattern, ruled: set[st
                 for c in cols:
                     v = rec.get(c)
                     if isinstance(v, str):
-                        raws.append(v.encode("utf-8"))
+                        raws.append(v.raw if isinstance(v, _Undecodable) else v.encode("utf-8"))
                     elif isinstance(v, (bytes, memoryview)):
                         (raws if _cell_text(v) is not None else vectors).append(bytes(v))
     finally:
@@ -618,6 +661,7 @@ class Plan:
     elsewhere: list[tuple[str, int]] = field(default_factory=list)
     elsewhere_near: list[tuple[str, int]] = field(default_factory=list)   # files with near-matches only
     db_other: list[dict] = field(default_factory=list)      # {"table", "column", "rows"}: named where it can't remove
+    unreadable: list[dict] = field(default_factory=list)    # {"table", "column", "rows"}: TEXT that isn't valid UTF-8
     schema: list[dict] = field(default_factory=list)        # {"type", "name", "where"}: schema objects that name them
     near: list[dict] = field(default_factory=list)          # {"word", "place", "text"}: kept, until a person rules
     vec_tables: list[str] = field(default_factory=list)
@@ -627,7 +671,8 @@ class Plan:
         return {"memories": len(self.memories), "entities": len(self.entities), "mentions": len(self.mentions),
                 "triples": len(self.triples), "wiki_pages": len(self.wiki_pages), "wiki_files": len(self.wiki_files),
                 "beliefs": len(self.beliefs), "belief_log_lines": self.belief_log_lines,
-                "unremovable_cells": sum(d["rows"] for d in self.db_other), "schema_objects": len(self.schema)}
+                "unremovable_cells": sum(d["rows"] for d in self.db_other), "schema_objects": len(self.schema),
+                "unreadable_cells": sum(d["rows"] for d in self.unreadable)}
 
     def near_words(self) -> list[str]:
         return sorted({n["word"] for n in self.near})
@@ -660,9 +705,7 @@ def _load_vec(con) -> bool:
 
 
 def _open(db: Path, readonly: bool):
-    con = sqlite3.connect(str(db), timeout=BUSY_TIMEOUT_S)
-    if readonly:
-        con.execute("PRAGMA query_only = 1")
+    con = _connect(db, readonly)
     vec = _vec_tables(con)
     if vec and not _load_vec(con):
         con.close()
@@ -712,7 +755,11 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
         try:
             # Every text column of every table, read once: what names the person, by table, as row keys; and the
             # schema (table, view, trigger and index names and definitions, column defaults included).
-            traces, cell_nears = _scan(con, hit, loose)
+            traces, cell_nears, unreadable = _scan(con, hit, loose)
+            bad: dict[tuple[str, str], int] = {}
+            for table, col, _ in unreadable:
+                bad[(table, col)] = bad.get((table, col), 0) + 1
+            out.unreadable = [{"table": t, "column": c, "rows": n} for (t, c), n in sorted(bad.items())]
             out.schema, schema_nears = _schema(con, hit, loose)
             in_table: dict[str, set] = {}
             for table, _, key in traces:
@@ -832,6 +879,7 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
              "entities": [e["id"] for e in out.entities], "mentions": out.mentions, "triples": out.triples,
              "wiki_pages": out.wiki_pages, "wiki_files": out.wiki_files, "beliefs": out.beliefs,
              "belief_log_lines": out.belief_log_lines, "db_other": out.db_other, "schema": out.schema,
+             "unreadable": out.unreadable,
              "near": sorted(json.dumps([n["word"], n["place"]], sort_keys=True, default=str) for n in out.near)}
     out.code = hashlib.sha256(json.dumps(ident, sort_keys=True).encode()).hexdigest()[:12]
     return out
@@ -879,10 +927,11 @@ def leftovers(names: list[str], home: Path, blobs: list[bytes] = (), others: tup
     p = _paths(home)
     found = []
     if p["db"].is_file():
-        con = sqlite3.connect(str(p["db"]), timeout=BUSY_TIMEOUT_S)
+        con = _connect(p["db"], readonly=True)
         try:
-            con.execute("PRAGMA query_only = 1")
             found += sorted({f"{p['db']}: table {t}, column {c}: the name" for t, c, _ in _traces(con, hit)})
+            found += [f"{p['db']}: table {t}, column {c}: text that isn't valid UTF-8, which the check can't read"
+                      for t, c in _undecodable(con)]
         finally:
             con.close()
     explained = None                     # read from the kept rows only when the bytes hold a match to explain
@@ -935,6 +984,12 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
     if not confirm or confirm != p.code:
         raise EraseError(f"the code {confirm!r} isn't this erase's ({p.code}): what would be removed has changed "
                          f"since the dry run, or no dry run was read. Nothing was removed. Run the dry run again")
+    if p.unreadable:
+        raise EraseUnreadable("the database holds text that isn't valid UTF-8 (" + ", ".join(
+            f"table {d['table']}, column {d['column']}: {d['rows']} cell(s)" for d in p.unreadable) + "), written "
+            "with CAST(... AS TEXT) or by a program writing another encoding, so whether it names the person can't be "
+            "read with certainty. Nothing was removed. A person rewrites those cells as UTF-8 text (or as a blob), or "
+            "removes them, then runs the dry run again")
     if p.db_other:
         raise EraseError("the database names the person where this erase can't remove it from ("
                          + ", ".join(f"table {d['table']}, column {d['column']}: {d['rows']} row(s)"
@@ -1092,6 +1147,11 @@ def describe(p: Plan) -> str:
         lines.append(f"\nEngine beliefs: {len(p.beliefs)} removed; {p.belief_log_lines} belief-log line(s) redacted")
     if p.vec_tables:
         lines.append(f"\nVector indexes rebuilt from what remains: {', '.join(p.vec_tables)}")
+    if p.unreadable:
+        lines.append(f"\nText that isn't valid UTF-8 ({len(p.unreadable)}), so whether it names the person can't be read "
+                     f"with certainty. The erase WILL REFUSE (exit code 4) until a person rewrites these cells as "
+                     f"UTF-8 text, or removes them:")
+        lines += [f"  table {d['table']}, column {d['column']}: {d['rows']} cell(s)" for d in p.unreadable]
     if p.db_other:
         lines.append(f"\nIn the database where this command can't remove it from ({len(p.db_other)}), so the erase "
                      f"WILL REFUSE until a person deals with these rows:")

@@ -21,7 +21,8 @@
     python -m apolaki.engine requeue QUEUE_ID   # an edited item becomes a new item, with its own check and hash
     python -m apolaki.engine sync            # turn recorded decisions into beliefs
     python -m apolaki.engine erase-person NAME [--alias A] [--confirm CODE --by WHO --reason WHY [--not-them WORD]]
-                                             # apolaki.agent.erase
+                                             # apolaki.agent.erase; exits 0 done (or a dry run), 1 incomplete,
+                                             # 2 refused, 4 refused on text that isn't valid UTF-8
 """
 from __future__ import annotations
 
@@ -261,10 +262,10 @@ def main(argv=None) -> int:
                 return 0
             done = X.erase(a.name, tuple(a.alias), confirm=a.confirm, by=a.by, reason=a.reason,
                            not_them=tuple(a.not_them))
-        except X.EraseError as e:
+        except X.EraseError as e:       # exit 1: ran but incomplete; 4: text that isn't UTF-8; 2: any other refusal
             incomplete = isinstance(e, X.EraseIncomplete)
             print(f"ERASE INCOMPLETE: {e}" if incomplete else f"not erased: {e}", file=sys.stderr)
-            return 1 if incomplete else 2
+            return 1 if incomplete else 4 if isinstance(e, X.EraseUnreadable) else 2
         c = done["counts"]
         print(f"erased: {c['memories']} memories, {c['entities']} entities, {c['mentions']} mentions, "
               f"{c['triples']} triples, {c['wiki_pages']} wiki pages and {c['wiki_files']} wiki files touched, "

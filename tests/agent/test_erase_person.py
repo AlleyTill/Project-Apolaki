@@ -1465,3 +1465,61 @@ def test_the_check_after_the_erase_reads_wide_text_in_a_text_cell_too(home):
     con.execute("INSERT INTO notes VALUES ('a1', CAST(? AS TEXT))", ("Call Marisol Quintero.".encode("utf-32-le"),))
     con.execute("INSERT INTO notes VALUES ('a2', ?)", ("Call Marisol Quintero.".encode("utf-16-be").decode("latin-1"),))
     assert X._traces(con, X._matcher([PERSON])) == [("notes", "body", "a1"), ("notes", "body", "a2")]
+
+
+# ---- round A (2026-11-07, docs/KNOWN_LIMITS.md section 5) -----------------------------------------------------------
+def rows_as_bytes(home):
+    """Every row of every ordinary table, TEXT read as bytes (a cell that isn't UTF-8 stops sqlite3's own reading)."""
+    con = sqlite3.connect(str(home / "db" / "apolaki.db"))
+    con.text_factory = bytes
+    try:
+        tables = [r[0].decode() for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND sql NOT "
+                                                     "LIKE '%VIRTUAL%'")]
+        return {t: sorted(map(repr, con.execute(f'SELECT * FROM "{t}"').fetchall())) for t in tables}
+    finally:
+        con.close()
+
+
+NOT_UTF8 = "Café meeting moved to Friday.".encode("latin-1")         # \xe9 alone isn't UTF-8
+
+
+def test_a_text_cell_that_isnt_utf8_is_listed_and_the_erase_refuses_with_its_own_exit_code(home, capsys):
+    """Item 2: before round A the dry run stopped with a Python traceback (sqlite3 can't decode the cell) and exit 1,
+    the code of an incomplete erase. Now the dry run lists the cell and the erase refuses, before changing anything,
+    with its own exception and exit code 4, whether or not the cell seems to name the person."""
+    import apolaki.engine as E
+    from apolaki.agent import erase as X
+    ids = plant(home)
+    con = raw_db(home)
+    con.execute("UPDATE memories SET source = CAST(? AS TEXT) WHERE id = ?", (NOT_UTF8, ids["m3"]))
+    con.commit()
+    [(kind,)] = con.execute("SELECT typeof(source) FROM memories WHERE id = ?", (ids["m3"],)).fetchall()
+    con.close()
+    assert kind == "text", "the setup lost its point"
+    with pytest.raises(sqlite3.OperationalError):          # what sqlite3 does with it on its own
+        db_rows(home, "SELECT source FROM memories")
+    p = X.plan(PERSON)
+    assert p.unreadable == [{"table": "memories", "column": "source", "rows": 1}]
+    assert p.counts()["unreadable_cells"] == 1 and not p.empty()
+    assert "WILL REFUSE (exit code 4)" in X.describe(p) and "table memories, column source: 1 cell(s)" in X.describe(p)
+    before = rows_as_bytes(home)
+    with pytest.raises(X.EraseUnreadable, match="Nothing was removed"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert rows_as_bytes(home) == before and not (home / "erasures.jsonl").exists()
+    assert E.main(["erase-person", PERSON]) == 0
+    assert "isn't valid UTF-8" in capsys.readouterr().out
+    assert E.main(["erase-person", PERSON, "--confirm", p.code, "--by", "x", "--reason", "asked"]) == 4
+    assert "not erased: the database holds text that isn't valid UTF-8" in capsys.readouterr().err
+    assert rows_as_bytes(home) == before
+
+
+def test_the_check_after_the_erase_reports_a_text_cell_that_isnt_utf8(home):
+    """leftovers() on its own: such a cell appearing during an erase makes it incomplete, never verified."""
+    from apolaki.agent import erase as X
+    ids = plant(home)
+    con = raw_db(home)
+    con.execute("UPDATE memories SET archive_reason = CAST(? AS TEXT) WHERE id = ?", (NOT_UTF8, ids["m3"]))
+    con.commit()
+    con.close()
+    found = X.leftovers(["Dev Okafor"], home)
+    assert any("column archive_reason: text that isn't valid UTF-8" in f for f in found), found
