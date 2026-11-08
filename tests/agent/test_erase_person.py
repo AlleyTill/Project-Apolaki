@@ -1690,9 +1690,9 @@ NAME_FORMS = [
     ("Thanks to \uab87arisol Quintero.", PERSON),                          # its small letter
     ("THANKS TO M\u13aaRISOL QUINTERO.", PERSON),                          # a Cherokee A
 ]
-NAME_FORM_IDS = ["comma", "semicolon", "colon", "middle dot", "hyphenation point", "katakana dot", "qp", "qp soft break",
-                 "qp soft break crlf", "qp soft break space", "qp space", "small capitals", "cherokee", "cherokee small",
-                 "cherokee a"]
+NAME_FORM_IDS = ["comma", "semicolon", "colon", "middle dot", "hyphenation point", "katakana dot", "qp",
+                 "qp soft break", "qp soft break crlf", "qp soft break space", "qp space", "small capitals", "cherokee",
+                 "cherokee small", "cherokee a"]
 
 
 @pytest.mark.parametrize("text,name", NAME_FORMS, ids=NAME_FORM_IDS)
@@ -1733,3 +1733,45 @@ def test_a_living_orthographys_letters_are_not_folded_to_latin():
     from apolaki.agent import erase as X
     for word in ("\u00fe\u00f3ra", "\u0192ia", "\u0263\u025b", "\u028bevi"):
         assert not X._fold(word).isascii() and not X._fold_bytes(word.encode()).isascii(), word
+
+
+# Item 5: the erase's reach. Approval-queue items, grant drafts and the grant hunt's files aren't memory, and the erase
+# never changes them; the dry run lists each place in them that names the person, read as memory is read, so a person
+# sees every place the name remains. Before round A it listed only the files its byte reading found, by name and count.
+def test_records_that_arent_memory_are_listed_place_by_place_and_never_changed(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    blog = home / "approval-queue" / "20261102_000000_blog.json"
+    blog.write_text(json.dumps({"id": "20261102_000000", "content": "<p>Thanks to Marisol&nbsp;Quintero.</p>",
+                                "status": "approved", "context": "spring appeal"}))
+    (home / "grant-drafts").mkdir()
+    (home / "grant-drafts" / "opp1_draft.md").write_text("# Letter\n\nWe thank our partners.\n\nContact: Marisol\n"
+                                                         "Quintero, board.\n")
+    (home / "grant-hunt" / "outcomes.jsonl").write_text(
+        json.dumps({"key": "OPP-1", "reason": "declined"}) + "\n"
+        + json.dumps({"key": "OPP-2", "reason": "the program officer, Marisol Quintero, said no"}) + "\n")
+    (home / "grant-hunt" / "outbox").mkdir()
+    (home / "grant-hunt" / "outbox" / "post.txt").write_bytes("Draft post thanking Marisol Quintero.".encode("utf-16"))
+    hit = X._matcher([PERSON])
+    assert not any(hit.search(t) for t in X._byte_texts(blog.read_bytes())), "the setup lost its point"
+    records = [f for f in home.rglob("*") if f.is_file() and f.relative_to(home).parts[0] in
+               ("approval-queue", "grant-drafts", "grant-hunt")]
+    before = {f: f.read_bytes() for f in records}
+    p = X.plan(PERSON)
+    assert {(r["file"], r["kind"], r["where"]) for r in p.records} == {
+        ("approval-queue/20261101_000000_social.json", "approval-queue item (pending)", "content"),
+        ("approval-queue/20261102_000000_blog.json", "approval-queue item (approved)", "content"),
+        ("grant-drafts/opp1_draft.md", "grant draft", "the file, across lines"),
+        ("grant-hunt/outcomes.jsonl", "grant hunt file", "line 2, reason"),
+        ("grant-hunt/outbox/post.txt", "grant hunt file", "the file, read as UTF-16, UTF-32 or Latin-1")}
+    assert len(p.records) == 5
+    assert [r["text"] for r in p.records if r["file"].endswith("social.json")] == [
+        "Thanks to Marisol Quintero for hosting."]
+    text = X.describe(p)
+    assert "Records that aren't memory, so NOT changed by this command: the name is in 5 place(s) in 5 file(s)" in text
+    assert "approval-queue/20261102_000000_blog.json (approval-queue item (approved)), content: <p>Thanks to " \
+           "Marisol&nbsp;Quintero.</p>" in text
+    assert "quarantine/q_0123456789abcdef.json" in text and "seen.json" not in text
+    done = X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert {f: f.read_bytes() for f in records} == before
+    assert {path for path, _ in done["elsewhere"]} >= {r["file"] for r in p.records}

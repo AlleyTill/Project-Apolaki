@@ -99,9 +99,11 @@ What it can't do:
   - erase by a name shorter than three letters (a two-character Chinese name included): it would match inside too much.
   - keep the rest of a memory. A memory that names the person goes whole, with whatever else it said; the dry run
     shows each one, so a person can store again what should stay, without the name.
-  - reach records that aren't memory. Approval-queue items, grant drafts, the grant hunt's files, the quarantine,
-    logs and backups can hold the name too: the dry run lists every other file under $APOLAKI_HOME the name (or a
-    near-match) is in, for a person to deal with, and leaves them alone. Copies outside $APOLAKI_HOME are beyond it.
+  - change records that aren't memory. Approval-queue items, grant drafts, the grant hunt's files, the quarantine,
+    logs and backups can hold the name too, and the erase leaves them alone. Since round A the dry run lists each place
+    in an approval-queue item (with its status), a grant draft or a grant hunt file that names the person, read as
+    memory is read, with the text around it; and every other file under $APOLAKI_HOME the name (or a near-match) is
+    in, by name. A person deals with each by hand. Copies outside $APOLAKI_HOME are beyond it.
   - run beside a live Apolaki. VACUUM needs the database to itself: stop the scheduled jobs and the MCP server
     first (docs/STOPPING.md).
   - settle a licence question. Apolaki's licence carries the SAFE-AI module, whose memory-sovereignty clause says
@@ -724,6 +726,7 @@ class Plan:
     belief_log_lines: int = 0
     elsewhere: list[tuple[str, int]] = field(default_factory=list)
     elsewhere_near: list[tuple[str, int]] = field(default_factory=list)   # files with near-matches only
+    records: list[dict] = field(default_factory=list)       # {"kind", "file", "where", "text"}: listed, never changed
     db_other: list[dict] = field(default_factory=list)      # {"table", "column", "rows"}: named where it can't remove
     unreadable: list[dict] = field(default_factory=list)    # {"table", "column", "rows"}: TEXT that isn't valid UTF-8
     schema: list[dict] = field(default_factory=list)        # {"type", "name", "where"}: schema objects that name them
@@ -865,6 +868,65 @@ def _snippet(text: str, word: str) -> str:
     return ("..." if start else "") + flat[start:start + 110]
 
 
+# Records that aren't memory, which the erase lists and never changes (round A): approval-queue items, grant drafts and
+# the grant hunt's files (its seen-list, logs, outbox and outcome log). Each place in one that names the person is
+# listed with the text around it, read as memory is read (escapes, markup, quoted-printable, look-alikes), so a person
+# sees every place the name remains. Any other file under $APOLAKI_HOME is listed by name and count (Plan.elsewhere).
+_RECORDS = {"approval-queue": "approval-queue item", "grant-drafts": "grant draft", "grant-hunt": "grant hunt file"}
+
+
+def _json_strings(value, where: str = ""):
+    """(where, string) for every string in a JSON value, keys included; where is its path ("content", "[2].reason")."""
+    if isinstance(value, str):
+        yield where or "the value", value
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            path = f"{where}.{k}" if where else str(k)
+            yield f"{path} (the key)", str(k)
+            yield from _json_strings(v, path)
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            yield from _json_strings(v, f"{where}[{i}]")
+
+
+def _record_hits(path: Path, raw: bytes, hit: re.Pattern) -> list[tuple[str, str]]:
+    """(where, text) for each place in a record file that names the person. A JSON file is read string by string, a
+    JSON-lines file line by line and string by string, any other file line by line; then, if no place names the
+    person, the whole file (a name broken across lines), and the file in the wide encodings and Latin-1 (a draft saved
+    as UTF-16)."""
+    text = raw.decode("utf-8-sig", errors="replace")
+    places: list[tuple[str, str]] = []
+    doc = None
+    if path.suffix == ".json":
+        try:
+            doc = json.loads(text)
+            places = list(_json_strings(doc))
+        except ValueError:
+            pass
+    if doc is None:
+        for i, line in enumerate(text.splitlines(), 1):
+            try:
+                if path.suffix != ".jsonl":
+                    raise ValueError
+                places += [(f"line {i}, {w}", v) for w, v in _json_strings(json.loads(line))]
+            except ValueError:
+                places.append((f"line {i}", line))
+    found = [(w, v) for w, v in places if _names_in(hit, v)]
+    if not found and _names_in(hit, text):
+        found = [("the file, across lines", text)]
+    if not found and any(_names_in(hit, t, fold=f) for t, f in _readings(raw, hit)):
+        found = [("the file, read as UTF-16, UTF-32 or Latin-1", "")]
+    return found
+
+
+def _hit_snippet(text: str, hit: re.Pattern) -> str:
+    """Up to 110 characters of a text, around where it names the person, for the dry run."""
+    flat = " ".join((text or "").split())
+    m = hit.search(_fold(flat))
+    start = max(0, m.start() - 40) if m else 0
+    return ("..." if start else "") + flat[start:start + 110]
+
+
 def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> Plan:
     """Everything the erase would remove, and every near-match it would keep, without changing anything."""
     home = home or config.home()
@@ -993,11 +1055,26 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
         if not f.is_file() or f in handled or p["wiki"] in f.parents:
             continue
         try:
-            texts = _byte_texts(f.read_bytes())
+            raw = f.read_bytes()
         except OSError:
             out.elsewhere.append((str(f.relative_to(home)), -1))
             continue
+        texts = _byte_texts(raw)
         n = max(len(hit.findall(t)) for t in texts)
+        top = f.relative_to(home).parts
+        if len(top) > 1 and top[0] in _RECORDS:
+            found = _record_hits(f, raw, hit)
+            status = ""
+            if top[0] == "approval-queue":
+                try:
+                    item = json.loads(raw.decode("utf-8-sig"))
+                    status = f" ({item['status']})" if isinstance(item, dict) and isinstance(item.get("status"), str) \
+                        else ""
+                except (ValueError, UnicodeDecodeError):
+                    pass
+            out.records += [{"kind": _RECORDS[top[0]] + status, "file": str(f.relative_to(home)), "where": w,
+                             "text": _hit_snippet(v, hit)} for w, v in found]
+            n = max(n, len(found))
         if n:
             out.elsewhere.append((str(f.relative_to(home)), n))
         elif any(_near_in(hit, loose, t) for t in texts):
@@ -1321,9 +1398,15 @@ def describe(p: Plan) -> str:
             where = ", ".join(f"{k} {str(v)[:8] if k == 'row' and isinstance(v, str) else v}"
                               for k, v in n["place"].items())
             lines.append(f"  {n['word']!r}: {where}: {n['text']}")
-    if p.elsewhere:
-        lines.append(f"\nNot memory, so NOT erased by this command; the name is also in ({len(p.elsewhere)}):")
-        lines += [f"  {path} ({'unreadable' if n < 0 else f'{n} time(s)'})" for path, n in p.elsewhere]
+    if p.records:
+        lines.append(f"\nRecords that aren't memory, so NOT changed by this command: the name is in "
+                     f"{len(p.records)} place(s) in {len({r['file'] for r in p.records})} file(s). A person deals with "
+                     f"each by hand (see docs/DATA_LIFECYCLE.md):")
+        lines += [f"  {r['file']} ({r['kind']}), {r['where']}: {r['text']}" for r in p.records]
+    other = [(path, n) for path, n in p.elsewhere if path not in {r["file"] for r in p.records}]
+    if other:
+        lines.append(f"\nNot memory, so NOT erased by this command; the name is also in ({len(other)}):")
+        lines += [f"  {path} ({'unreadable' if n < 0 else f'{n} time(s)'})" for path, n in other]
         lines.append("  A person deals with these by hand (see docs/DATA_LIFECYCLE.md).")
     if p.elsewhere_near:
         lines.append(f"\nNot memory, and NOT touched; the name inside a longer word is in ({len(p.elsewhere_near)}):")
