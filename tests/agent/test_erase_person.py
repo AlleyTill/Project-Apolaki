@@ -1514,14 +1514,41 @@ def test_a_text_cell_that_isnt_utf8_is_listed_and_the_erase_refuses_with_its_own
     assert p.counts()["unreadable_cells"] == 1 and not p.empty()
     assert "WILL REFUSE (exit code 4)" in X.describe(p) and "table memories, column source: 1 cell(s)" in X.describe(p)
     before = rows_as_bytes(home)
-    with pytest.raises(X.EraseUnreadable, match="Nothing was removed"):
+    with pytest.raises(X.EraseError) as refused:        # any EraseError, so a wrong one fails an assertion below
         X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert type(refused.value) is X.EraseUnreadable and "Nothing was removed" in str(refused.value)
     assert rows_as_bytes(home) == before and not (home / "erasures.jsonl").exists()
     assert E.main(["erase-person", PERSON]) == 0
     assert "isn't valid UTF-8" in capsys.readouterr().out
     assert E.main(["erase-person", PERSON, "--confirm", p.code, "--by", "x", "--reason", "asked"]) == 4
     assert "not erased: the database holds text that isn't valid UTF-8" in capsys.readouterr().err
     assert rows_as_bytes(home) == before
+
+
+def test_a_text_cell_that_isnt_utf8_is_read_wide_from_its_stored_bytes(home):
+    """UTF-16 of an accented name in a text cell isn't valid UTF-8 (a byte past 0x7f before a NUL): the dry run lists
+    it as unreadable, and its stored bytes, read wide, show the name too (the bytes with U+FFFD in them don't)."""
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, "CREATE TABLE att3 (id TEXT, body TEXT)", "INSERT INTO att3 VALUES ('a1', CAST(? AS TEXT))",
+             params=((), (("Caf\u00e9 with " + MARIA).encode("utf-16-le"),)))
+    p = X.plan(MARIA)
+    assert p.unreadable == [{"table": "att3", "column": "body", "rows": 1}]
+    assert p.db_other == [{"table": "att3", "column": "body", "rows": 1}], X.describe(p)
+
+
+def test_a_near_match_only_escape_decoding_shows_is_listed(home):
+    """_scan folds each reading's variants once for both searches (round A): the near-match search reads every variant,
+    so one that only the decoded tags show (store() escapes every non-ASCII letter) is listed."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store(MARIA + " leads the tenant union.")
+    kept = s.store("Seating plan for the gala.", tags=["guest: " + MARIA + "ova"])
+    s.close()
+    [(tags,)] = db_rows(home, f"SELECT tags FROM memories WHERE id = '{kept}'")
+    assert "\\u00f3" in tags, "the setup lost its point"
+    p = X.plan(MARIA)
+    assert kept not in [m["id"] for m in p.memories] and p.near_words() == ["maria lopezova"], X.describe(p)
 
 
 def test_the_check_after_the_erase_reports_a_text_cell_that_isnt_utf8(home):
@@ -1571,6 +1598,16 @@ def test_apolakis_own_schema_needs_no_persons_check(home):
     con.close()
     ms.ApolakiMemoryStore(db_path=old / "db" / "apolaki.db", wiki_path=old / "wiki").close()
     assert X.plan(PERSON, home=old).hand_added == []
+
+
+def test_sqlites_own_statistics_need_no_persons_check(home):
+    """ANALYZE (or PRAGMA optimize) makes sqlite_stat1, which holds table and index names and numbers: SQLite's, not a
+    hand-added table."""
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, "ANALYZE")
+    assert db_rows(home, "SELECT count(*) FROM sqlite_master WHERE name = 'sqlite_stat1'") == [(1,)], "lost its point"
+    assert X.plan(PERSON).hand_added == []
 
 
 def test_what_apolaki_didnt_make_is_listed_and_the_erase_refuses_until_a_person_checks_each(home, capsys):
@@ -1752,6 +1789,7 @@ def test_records_that_arent_memory_are_listed_place_by_place_and_never_changed(h
         + json.dumps({"key": "OPP-2", "reason": "the program officer, Marisol Quintero, said no"}) + "\n")
     (home / "grant-hunt" / "outbox").mkdir()
     (home / "grant-hunt" / "outbox" / "post.txt").write_bytes("Draft post thanking Marisol Quintero.".encode("utf-16"))
+    (home / "grant-hunt" / "contacts.json").write_text(json.dumps({"OPP-3": {"Marisol Quintero": "program officer"}}))
     hit = X._matcher([PERSON])
     assert not any(hit.search(t) for t in X._byte_texts(blog.read_bytes())), "the setup lost its point"
     records = [f for f in home.rglob("*") if f.is_file() and f.relative_to(home).parts[0] in
@@ -1763,12 +1801,14 @@ def test_records_that_arent_memory_are_listed_place_by_place_and_never_changed(h
         ("approval-queue/20261102_000000_blog.json", "approval-queue item (approved)", "content"),
         ("grant-drafts/opp1_draft.md", "grant draft", "the file, across lines"),
         ("grant-hunt/outcomes.jsonl", "grant hunt file", "line 2, reason"),
-        ("grant-hunt/outbox/post.txt", "grant hunt file", "the file, read as UTF-16, UTF-32 or Latin-1")}
-    assert len(p.records) == 5
+        ("grant-hunt/outbox/post.txt", "grant hunt file", "the file, read as UTF-16, UTF-32 or Latin-1"),
+        ("grant-hunt/contacts.json", "grant hunt file", "OPP-3.Marisol Quintero (the key)")}
+    assert len(p.records) == 6
     assert [r["text"] for r in p.records if r["file"].endswith("social.json")] == [
         "Thanks to Marisol Quintero for hosting."]
     text = X.describe(p)
-    assert "Records that aren't memory, so NOT changed by this command: the name is in 5 place(s) in 5 file(s)" in text
+    assert "Records that aren't memory, so NOT changed by this command: the name is in 6 place(s) in 6 file(s)" in text
+    assert text.count("approval-queue/20261101_000000_social.json") == 1          # listed once, with its place
     assert "approval-queue/20261102_000000_blog.json (approval-queue item (approved)), content: <p>Thanks to " \
            "Marisol&nbsp;Quintero.</p>" in text
     assert "quarantine/q_0123456789abcdef.json" in text and "seen.json" not in text
