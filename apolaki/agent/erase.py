@@ -13,12 +13,14 @@ path that deletes. It is a command a person runs; the MCP server has no erase to
 
 What counts as the name, for the name and each alias:
   - case, accents, look-alike letters, curly quotes and invisible characters are folded (apolaki.security.normalize),
-    so "María López" also finds "MARIA LOPEZ";
-  - the parts of a name are the pieces between spaces, hyphens and dashes, apostrophes, full stops, underscores and
-    markup characters (* [ ] ( ) { } < > / \\ | # ~ ^ = +), and in the text any run of those, or nothing, may stand
-    between two parts: "Jean-Luc Moreau" finds "Jean Luc Moreau", "Jean–Luc Moreau" (an en dash), "JeanLuc Moreau",
-    "jean_luc_moreau" (a wiki file name) and "jean.luc.moreau"; "O'Brien" finds "OBrien" and "O Brien"; "Marisol
-    Quintero" finds "**Marisol** Quintero" and "Marisol/Quintero";
+    so "María López" also finds "MARIA LOPEZ"; and since round A small capitals and the Cherokee letters that look
+    Latin are read as the Latin letter (_SKELETON), so "Marisol" also finds the small-capital and "\u13b7arisol" forms;
+  - the parts of a name are the pieces between spaces, hyphens and dashes, apostrophes, full stops, underscores,
+    markup characters (* [ ] ( ) { } < > / \\ | # ~ ^ = +), commas, semicolons, colons and middle dots, and in the text
+    any run of those, or nothing, may stand between two parts: "Jean-Luc Moreau" finds "Jean Luc Moreau", "Jean–Luc
+    Moreau" (an en dash), "JeanLuc Moreau", "jean_luc_moreau" (a wiki file name) and "jean.luc.moreau"; "O'Brien" finds
+    "OBrien" and "O Brien"; "Marisol Quintero" finds "**Marisol** Quintero", "Marisol/Quintero", "Marisol,Quintero" (a
+    CSV row) and "Marisol\u00b7Quintero";
   - a match must not touch a letter or a digit of a script written with spaces before it, nor such a letter after it.
     A digit after the name is still the name ("marisol.quintero85@...", "@MarisolQuintero1990"). A character of a
     script written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Myanmar, Tibetan, Yi) or of Korean, whose
@@ -28,7 +30,8 @@ What counts as the name, for the name and each alias:
   - text is read as stored, with its escapes decoded (\\u00f3, \\U..., \\x.., \\n and the like, any number of
     backslashes deep, since store() writes tags with json.dumps, which escapes every non-ASCII letter), and with its
     markup taken out: a Markdown link or image ("[Marisol](url) Quintero"), an HTML tag, an HTML entity
-    ("Mar&iacute;a") and percent-encoding.
+    ("Mar&iacute;a") and percent-encoding; and read as quoted-printable, soft line breaks included ("L=C3=B3pez",
+    "Mari=" at a line's end then "sol"), since round A.
 A near-match is the name inside a longer word: what the pattern finds without the word edges that it doesn't find
 with them ("Marisol Quinterova", "xMarisol Quintero"). It may be another person, or her. The dry run lists every
 near-match in what the erase keeps (any column of any kept row, the schema, kept wiki pages, kept beliefs, what the
@@ -215,8 +218,23 @@ def _demarked(text: str) -> tuple[str, ...]:
     return (_TAG.sub("", t), _TAG.sub(" ", t))
 
 
+# Quoted-printable, as email bodies are written (round A): "=C3=B3" is the UTF-8 bytes of "\u00f3", and "=" at the end
+# of a line is a soft line break that joins it to the next ("Mari=" then "sol").
+_QP = re.compile(r"=(?:[0-9A-Fa-f]{2}|[ \t]*\r?\n)")
+_QP_SOFT = re.compile(r"=[ \t]*\r?\n")
+_QP_BYTE = re.compile(rb"=([0-9A-Fa-f]{2})")
+
+
+def _unqp(text: str) -> str:
+    """The text read as quoted-printable: soft line breaks taken out, then each =XX as the byte it names, the bytes
+    read as UTF-8 (a byte that isn't, as U+FFFD)."""
+    raw = _QP_SOFT.sub("", text).encode("utf-8", errors="surrogatepass")
+    return _QP_BYTE.sub(lambda m: bytes.fromhex(m.group(1).decode()), raw).decode("utf-8", errors="replace")
+
+
 def _variants(text: str) -> tuple[str, ...]:
-    """The text as stored, with its escapes decoded, and with its markup taken out (_demarked), each when it differs.
+    """The text as stored, with its escapes decoded, with its markup taken out (_demarked), and read as quoted-printable
+    (_unqp) when it holds a quoted-printable escape, each when it differs.
     All are read: decoding can also hide a match ("C:\\nicolas" would lose its n), so the stored form is never
     dropped."""
     out = [text]
@@ -224,15 +242,39 @@ def _variants(text: str) -> tuple[str, ...]:
     for t in (decoded, *_demarked(text), *(_demarked(decoded) if decoded != text else ())):
         if t not in out:
             out.append(t)
+    for base in (text, decoded) if decoded != text else (text,):         # quoted-printable (round A)
+        if _QP.search(base):
+            unqp = _unqp(base)
+            for t in (unqp, *_demarked(unqp)):
+                if t not in out:
+                    out.append(t)
     return tuple(out)
 
 
+# Look-alike letters normalize() doesn't fold (round A): the small capitals, read as their letter
+# ("\u1d0d\u1d00\u0280\u026as\u1d0f\u029f" reads "MARISOL"), and the Cherokee letters that Unicode's confusables list
+# maps to a Latin letter ("\u13b7arisol"). The Cherokee pairs are from confusables.txt (UTS #39, version 18.0.0,
+# 2026-08-06; (c) Unicode, Inc., under the Unicode License, https://www.unicode.org/license.txt). The small capitals are
+# taken by their names, not from that list, which maps small capital M to a turned w. Each key is as the fold leaves
+# it: after case folding, a Cherokee small letter is its capital. Latin letters of living orthographies that the list
+# also maps to an ASCII letter (Icelandic thorn, Ewe f, gamma and v with hook, Kabiye iota, the click letters) are left
+# out: folded, a name in one of them would match a different Latin name, and a memory matched so goes whole.
+_SKELETON = str.maketrans(
+    "\u0262\u026a\u0274\u0280\u028f\u0299\u029c\u1d00\u1d04\u1d05\u1d07\u1d0a\u1d0b\u1d0d\u1d0f\u1d18\u1d1b"
+    "\u1d1c\u1d20\u1d21\u1d22\ua730\ua731\ua7af"                                       # small capitals
+    "\u13a0\u13a1\u13a2\u13a5\u13a9\u13aa\u13ab\u13ac\u13b1\u13b3\u13b7\u13bb\u13bd\u13c0\u13c2\u13c3\u13cf"
+    "\u13d2\u13d4\u13d5\u13d9\u13da\u13de\u13df\u13e2\u13e6\u13e7\u13f3\u13f4",           # Cherokee
+    "ginrybhacdejkmoptuvwzfsq"
+    "drtiyajerwmhyghzbrwsvslcpkdgb")
+
+
 def _fold(text: str) -> str:
-    """Text as the matcher reads it: apolaki.security.normalize, then case folded. For ASCII text normalize() changes
-    only quote marks, so that is all this does there (the same result, without its per-character Python loops)."""
+    """Text as the matcher reads it: apolaki.security.normalize, then case folded, then the look-alikes it leaves
+    (_SKELETON). For ASCII text normalize() changes only quote marks, so that is all this does there (the same result,
+    without its per-character Python loops)."""
     text = text or ""
-    folded = text.translate(_QUOTES) if text.isascii() else normalize(text)
-    return " ".join(folded.casefold().split())
+    folded = text.translate(_QUOTES).casefold() if text.isascii() else normalize(text).casefold().translate(_SKELETON)
+    return " ".join(folded.split())
 
 
 # For the byte-level check of the database files, whose float vectors decode to megabytes of non-ASCII noise:
@@ -286,13 +328,14 @@ def _swap(table: dict):
 
 
 _untag, _straighten, _unlook = _swap(_TAG_ASCII), _swap(_QUOTES), _swap(_LOOKALIKES)
+_skeleton = _swap(_SKELETON)
 
 
 def _fold_fast(text: str) -> str:
     invisible, marks, far = _byte_fold_strip()
     t = _straighten(invisible.sub("", _untag(text)))
     t = _unlook(far(marks.sub("", unicodedata.normalize("NFKD", t))))
-    return _straighten(unicodedata.normalize("NFC", t)).casefold()
+    return _skeleton(_straighten(unicodedata.normalize("NFC", t)).casefold())
 
 
 def _fold_bytes(raw: bytes) -> str:
@@ -319,10 +362,11 @@ def _byte_texts(raw: bytes) -> list[str]:
     return out + [_fold_fast(_unescape(text[a:b])) for a, b in spans]
 
 
-# Between two parts of a name: any run of spaces, hyphens and dashes, apostrophes, full stops, underscores and markup
-# characters (* [ ] ( ) { } < > / \ | # ~ ^ = +), or none.
-# \u2010-\u2015 are the Unicode hyphens and dashes; \u2212 is the minus sign.
-_SEP = r"[\s\-\u2010-\u2015\u2212'._*\[\](){}<>/\\|#~^=+]"
+# Between two parts of a name: any run of spaces, hyphens and dashes, apostrophes, full stops, underscores, markup
+# characters (* [ ] ( ) { } < > / \ | # ~ ^ = +), and since round A commas, semicolons, colons and middle dots (a CSV
+# row, "Marisol;Quintero", "Marisol\u00b7Quintero", a Japanese name in katakana with its dot), or none.
+# \u2010-\u2015 are the Unicode hyphens and dashes; \u2212 is the minus sign; \u00b7, \u2027 and \u30fb are middle dots.
+_SEP = r"[\s\-\u2010-\u2015\u2212'._*\[\](){}<>/\\|#~^=+,;:\u00b7\u2027\u30fb]"
 _SPLIT = re.compile(_SEP + "+")
 # Scripts written without spaces between words (Chinese, Japanese, Thai, Lao, Khmer, Myanmar, Tibetan, Yi), and
 # Korean, whose particles and honorifics attach to a name: a name written in one has no word edge to keep, and a
@@ -476,7 +520,7 @@ _KEEP_UNIT = bytes([0xFF, 0x00]) + bytes(254)
 
 def _utf32(raw: bytes, little: bool) -> str:
     """raw, a whole number of units, as UTF-32, each unit past U+10FFFF read as NUL (a surrogate as U+FFFD)."""
-    if b"\x00" not in raw:          # every unit's top byte is not 0, so every unit is past U+10FFFF (round A: most text)
+    if b"\x00" not in raw:          # no unit's top byte is 0, so every unit is past U+10FFFF (round A: most text)
         return "\x00" * (len(raw) // 4)
     top, mid = (raw[3::4], raw[2::4]) if little else (raw[0::4], raw[1::4])
     past = int.from_bytes(top.translate(_PAST_TOP), "big") | int.from_bytes(mid.translate(_PAST_MID), "big")
@@ -496,8 +540,8 @@ def _utf32(raw: bytes, little: bool) -> str:
 # wide only when it held a control character other than those three, which left the Indic and Chinese cases a false
 # success (round 5's verifier: 48 of 48 Indic plants). Since round A every text cell is read wide. On a test store of
 # 1,500 memories with the vector indexes (CPU time, the least of three runs on a busy machine), the dry run took 6.8 s
-# against 6.1 s before and the check's reading of the rows 5.6 s against 3.8 s, since the readings that can't hold a name
-# are dropped before they are folded (_readings, _utf32) and _scan folds each reading once for both of its searches.
+# against 6.1 s before and the check's reading of the rows 5.6 s against 3.8 s, since the readings that can't hold a
+# name are dropped before they are folded (_readings, _utf32) and _scan folds each reading once for both its searches.
 def _wide_bytes(value) -> list[bytes]:
     """The bytes a cell's wide readings start from: a blob's own; a TEXT cell that isn't valid UTF-8 (_Undecodable),
     its stored bytes; any other str's UTF-8 bytes (what CAST stored) and, when every character fits, its Latin-1
@@ -729,9 +773,9 @@ def _load_vec(con) -> bool:
         return False
 
 
-# SQLite's own bookkeeping, which holds table names and numbers, never a row's text: AUTOINCREMENT's counters (sqlite-vec
-# uses them) and ANALYZE's statistics. sqlite_stat4 isn't here: it keeps samples of indexed values, which are text, and
-# isn't cleared when their rows are deleted.
+# SQLite's own bookkeeping, which holds table names and numbers, never a row's text: AUTOINCREMENT's counters
+# (sqlite-vec uses them) and ANALYZE's statistics. sqlite_stat4 isn't here: it keeps samples of indexed values, which
+# are text, and isn't cleared when their rows are deleted.
 _SQLITE_OWN = frozenset({("table", "sqlite_sequence", None), ("table", "sqlite_stat1", None),
                          *(("column", t, c) for t, cs in (("sqlite_sequence", ("name", "seq")),
                                                           ("sqlite_stat1", ("tbl", "idx", "stat"))) for c in cs)})
@@ -1250,8 +1294,8 @@ def describe(p: Plan) -> str:
     if p.vec_tables:
         lines.append(f"\nVector indexes rebuilt from what remains: {', '.join(p.vec_tables)}")
     if p.unreadable:
-        lines.append(f"\nText that isn't valid UTF-8 ({len(p.unreadable)}), so whether it names the person can't be read "
-                     f"with certainty. The erase WILL REFUSE (exit code 4) until a person rewrites these cells as "
+        lines.append(f"\nText that isn't valid UTF-8 ({len(p.unreadable)}), so whether it names the person can't be "
+                     f"read with certainty. The erase WILL REFUSE (exit code 4) until a person rewrites these cells as "
                      f"UTF-8 text, or removes them:")
         lines += [f"  table {d['table']}, column {d['column']}: {d['rows']} cell(s)" for d in p.unreadable]
     if p.db_other:
@@ -1263,9 +1307,9 @@ def describe(p: Plan) -> str:
                      f"WILL REFUSE until a person renames or drops these:")
         lines += [f"  {s['type']} {s['name']!r}: its {s['where']}" for s in p.schema]
     if p.hand_added:
-        lines.append(f"\nNot Apolaki's ({len(p.hand_added)}): tables, columns, views and triggers its code didn't make. "
-                     f"This erase reads them, but certifies only Apolaki's own tables, since text can be stored in "
-                     f"them in ways it doesn't read (base64, say). The erase WILL REFUSE until a person has checked "
+        lines.append(f"\nNot Apolaki's ({len(p.hand_added)}): tables, columns, views and triggers its code didn't "
+                     f"make. This erase reads them, but certifies only Apolaki's own tables, since text can be stored "
+                     f"in them in ways it doesn't read (base64, say). The erase WILL REFUSE until a person has checked "
                      f"each by hand (a table or column for the name in any form; a view or trigger for what it reads, "
                      f"and a trigger for what it copies when the erase deletes rows), and names each with --checked:")
         lines += [f"  {h['kind']} {h['name']!r}: --checked {h['token']!r}" for h in p.hand_added]

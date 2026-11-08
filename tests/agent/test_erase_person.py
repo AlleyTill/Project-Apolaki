@@ -1491,7 +1491,7 @@ def rows_as_bytes(home):
         con.close()
 
 
-NOT_UTF8 = "Café meeting moved to Friday.".encode("latin-1")         # \xe9 alone isn't UTF-8
+NOT_UTF8 = "Caf\u00e9 meeting moved to Friday.".encode("latin-1")         # \xe9 alone isn't UTF-8
 
 
 def test_a_text_cell_that_isnt_utf8_is_listed_and_the_erase_refuses_with_its_own_exit_code(home, capsys):
@@ -1667,3 +1667,69 @@ def test_wide_text_with_no_control_character_in_a_hand_added_table_is_found_and_
     assert p.db_other == [{"table": "att2", "column": "body", "rows": 1}] and p.checks() == ["table:att2"]
     with pytest.raises(X.EraseError, match="Nothing was removed"):
         X.erase(name, confirm=p.code, by="x", reason="asked", checked=p.checks())
+
+
+# Item 4: name forms code can handle. KNOWN_LIMITS section 5 listed each as a form the erase read past, with a false
+# success: the separators , ; : and the middle dot, quoted-printable (soft line breaks included), and look-alike letters
+# normalize() doesn't fold (small capitals, Cherokee letters that look Latin).
+KATAKANA = "\u30de\u30ea\u30bd\u30eb \u30ad\u30f3\u30c6\u30ed"          # "Marisol Quintero" in katakana
+NAME_FORMS = [
+    ("Contacts: Marisol,Quintero,555-0100", PERSON),                       # a CSV row
+    ("Marisol;Quintero;volunteer", PERSON),
+    ("organiser:Marisol:Quintero", PERSON),
+    ("Marisol\u00b7Quintero leads the union.", PERSON),                    # a middle dot
+    ("Marisol\u2027Quintero leads the union.", PERSON),                    # a hyphenation point
+    ("\u30de\u30ea\u30bd\u30eb\u30fb\u30ad\u30f3\u30c6\u30ed\u3055\u3093", KATAKANA),   # the katakana middle dot
+    ("Thanks to Mar=C3=ADa L=C3=B3pez for hosting.", MARIA),               # quoted-printable
+    ("Thanks to Mari=\nsol Quintero for hosting.", PERSON),                # a soft line break
+    ("Thanks to Mari=\r\nsol Quintero for hosting.", PERSON),
+    ("Thanks to Mari= \r\nsol Quintero for hosting.", PERSON),             # whitespace before the break
+    ("Thanks to Marisol=20Quintero.", PERSON),                             # a space written as =20
+    ("Thanks to \u1d0d\u1d00\u0280\u026a\ua731\u1d0f\u029f Quintero.", PERSON),        # small capitals
+    ("Thanks to \u13b7arisol Quintero.", PERSON),                          # a Cherokee M
+    ("Thanks to \uab87arisol Quintero.", PERSON),                          # its small letter
+    ("THANKS TO M\u13aaRISOL QUINTERO.", PERSON),                          # a Cherokee A
+]
+NAME_FORM_IDS = ["comma", "semicolon", "colon", "middle dot", "hyphenation point", "katakana dot", "qp", "qp soft break",
+                 "qp soft break crlf", "qp soft break space", "qp space", "small capitals", "cherokee", "cherokee small",
+                 "cherokee a"]
+
+
+@pytest.mark.parametrize("text,name", NAME_FORMS, ids=NAME_FORM_IDS)
+def test_a_name_in_a_form_round_a_reads_is_found_and_erased(home, text, name):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    mid = s.store(text)
+    kept = s.store("Brand voice: plain and warm.")
+    s.close()
+    p = X.plan(name)
+    assert [m["id"] for m in p.memories] == [mid], X.describe(p)
+    X.erase(name, confirm=p.code, by="the data lead", reason="asked to be removed")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+
+
+@pytest.mark.parametrize("tag", ["guest: Mari=\nsol Quintero", "guest: Mar=C3=ADa L=C3=B3pez"], ids=["soft", "bytes"])
+def test_quoted_printable_in_escaped_tags_is_read_too(home, tag):
+    """store() writes tags with json.dumps, so the soft line break is a backslash-n on disk: escapes are decoded, then
+    the quoted-printable."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    tagged = s.store("Seating plan for the gala.", tags=[tag])
+    s.close()
+    name = MARIA if "C3" in tag else PERSON
+    assert "\\n" in db_rows(home, "SELECT tags FROM memories")[0][0] or "C3" in tag, "the setup lost its point"
+    assert [m["id"] for m in X.plan(name).memories] == [tagged]
+
+
+@pytest.mark.parametrize("probe", ["\u1d0d\u1d00\u0280\u026a\ua731\u1d0f\u029f", "\u13b7arisol", "\uab87arisol",
+                                   "M\u13aaRISOL", "\u0262\u0274\u028f\u0299\u029c\u1d04\u1d05\u1d07\u1d0a\u1d0b"])
+def test_the_byte_fold_reads_look_alikes_like_the_full_fold(probe):
+    from apolaki.agent import erase as X
+    assert X._fold_bytes(probe.encode()) == X._fold(probe) and X._fold(probe).isascii()
+
+
+def test_a_living_orthographys_letters_are_not_folded_to_latin():
+    """Icelandic thorn and Ewe's f, gamma and v with hook stay themselves: a name in them isn't another Latin name."""
+    from apolaki.agent import erase as X
+    for word in ("\u00fe\u00f3ra", "\u0192ia", "\u0263\u025b", "\u028bevi"):
+        assert not X._fold(word).isascii() and not X._fold_bytes(word.encode()).isascii(), word
