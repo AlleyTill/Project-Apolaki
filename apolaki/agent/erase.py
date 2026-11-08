@@ -541,9 +541,10 @@ def _utf32(raw: bytes, little: bool) -> str:
 # three-character name); a writer that read the bytes as Latin-1 stores each byte as a character. Round 5 read a str
 # wide only when it held a control character other than those three, which left the Indic and Chinese cases a false
 # success (round 5's verifier: 48 of 48 Indic plants). Since round A every text cell is read wide. On a test store of
-# 1,500 memories with the vector indexes (CPU time, the least of three runs on a busy machine), the dry run took 6.8 s
-# against 6.1 s before and the check's reading of the rows 5.6 s against 3.8 s, since the readings that can't hold a
-# name are dropped before they are folded (_readings, _utf32) and _scan folds each reading once for both its searches.
+# 1,500 memories with the vector indexes (CPU time, the least of three runs on a busy machine, round A's code as a
+# whole), the dry run took 7.2 s against 6.1 s before and the check's reading of the rows 6.1 s against 3.8 s; without
+# dropping the readings that can't hold a name before they are folded (_readings, _utf32) and folding each reading once
+# for both of _scan's searches, reading every text cell wide alone took the dry run to about 15 s.
 def _wide_bytes(value) -> list[bytes]:
     """The bytes a cell's wide readings start from: a blob's own; a TEXT cell that isn't valid UTF-8 (_Undecodable),
     its stored bytes; any other str's UTF-8 bytes (what CAST stored) and, when every character fits, its Latin-1

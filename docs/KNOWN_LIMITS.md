@@ -9,7 +9,9 @@ The lists come from the verifiers' reports on rounds 3 and 4 (2026-11-04) and fr
 down in the code. Round 4 fixed only three things: honest copy that round 3 had started blocking, a gap in erasing a
 person, and injection text hidden in an HTML attribute. Round 5 took back one of round 4's fixes, which let invented
 reviews through (section 3 lists the honest copy that is blocked again), and closed the same erase gap for text
-cells. Everything below is still open.
+cells. Round A (2026-11-07) changed only code that decodes or protects data, nothing in the ethics checks: the intake
+screen's decoding (section 4) and the erase (section 5), each section saying what it closed and what remains.
+Everything else below is still open.
 
 ## 1. The ethics checks: what still gets through
 
@@ -105,12 +107,15 @@ lands in the queue, and a person can approve it with an override note saying why
 ## 4. The intake screen (outside text: grant listings, funder pages, memories stored over MCP)
 
 The screen is a list of known injection phrasings. It catches the common disguises (invisible characters, look-alike
-letters, HTML tags and entities, and since round 4 an instruction hidden in an HTML attribute). It still misses:
+letters, HTML tags and entities, and since round 4 an instruction hidden in an HTML attribute). Since round A it also
+decodes entities and percent-encoding again and again until nothing changes, so text escaped twice is read
+("&amp;nbsp;", "&amp;lt;|im_start|&amp;gt;", "Ignore%20all%20previous", "%2520"); closes a tag left open at the end
+of the text; and reads the words inside a tag where they stand ("Ignore all <b previous instructions", which a
+browser hides and a model reads). A text still changing after 16 rounds of decoding is held for you. It still misses:
 
 - a paraphrase, another language, or an instruction split across texts screened separately;
-- entities escaped twice ("&amp;nbsp;", "&amp;lt;|im_start|&amp;gt;"), percent-encoding ("Ignore%20all%20previous"),
-  an unclosed tag ("Ignore all <b previous instructions"), a Markdown link splitting the words, a backslash escape
-  ("\u0069nstructions" for "instructions"), and an instruction partly inside a <script> block.
+- a Markdown link splitting the words, a backslash escape ("\u0069nstructions" for "instructions"), base64 or rot13,
+  a tag left open anywhere but at the end of the text, and an instruction partly inside a <script> block.
 
 It also holds research that only discusses injection, like an attack, until a person releases it. The chat with the
 person at the keyboard isn't screened, nothing reads Discord yet, and a grant job deployed before these checks doesn't
@@ -122,18 +127,40 @@ rate, approve, ignore, reveal. Release from the quarantine only what you have re
 ## 5. Erasing a person (`erase-person`)
 
 The erase finds a person by the name and the aliases given. It reports success only when its own check finds nothing
-left, but its check reads the same forms of the name its search does. So it can report success while the person is
-still there in a form it doesn't read:
+left, and its check reads the same forms of the name its search does. Round A (2026-11-07) changed what that success
+covers:
 
-- the name in a CSV row or with other separators: "Marisol,Quintero", "Marisol;Quintero", "Marisol:Quintero",
-  "Marisol·Quintero" (a middle dot);
+- **It certifies only Apolaki's own tables.** A table, a column added to one of Apolaki's tables, a view or a trigger
+  that Apolaki's code didn't make is listed in the dry run under "Not Apolaki's", whatever it holds, and the erase
+  refuses until you name each with `--checked` (for example `--checked table:campaign_notes`). That says you checked
+  it by hand: a table or column for the name in any form, a trigger for what it copies when the erase deletes rows.
+  The erase still reads those tables and refuses on a name it finds there, but text can be stored in ways it doesn't
+  read (base64, a compressed or encrypted value, an encoding it doesn't try). The report then reads "verified for
+  Apolaki's tables; N hand-added ... checked by a person", and the erasure record keeps what you named
+  (`checked_by_person`). Your check is your word; the erase doesn't verify it.
+- **Every text cell is read in UTF-16 and UTF-32 as well.** Round 5 read a text cell so only when it held a control
+  character, which left a false success (the report said verified with the name still in the database) for UTF-16 of
+  a single Devanagari, Gurmukhi or Malayalam word, 48 of 48 planted cases, and of a Chinese name. Those are found now,
+  in Apolaki's own columns too, where no person's check stands in.
+- **A text cell that isn't valid UTF-8 is a refusal, not a crash.** The dry run lists it, and the erase refuses with
+  exit code 4 until you rewrite or remove the cell. Before, the dry run stopped with a Python error and exit 1.
+
+It also reads, since round A: a comma, semicolon, colon or middle dot between the parts of a name
+("Marisol,Quintero" in a CSV row, "Marisol·Quintero"); quoted-printable, soft line breaks included ("L=C3=B3pez",
+and "Mari=" at the end of one line with "sol" on the next); and small capitals ("ᴍᴀʀɪsᴏʟ") and the Cherokee letters
+that look Latin ("Ꮇarisol").
+
+It can still report success while the person is still there, in Apolaki's own tables, in a form it doesn't read:
+
 - grammatical case endings: Russian and other Slavic languages change a name's ending ("Марию" for "Мария", "Ивана
   Петрова" for "Иван Петров");
-- some look-alike letters: small capitals ("ᴍᴀʀɪsᴏʟ") and Cherokee letters that look Latin ("Ꮇarisol"). The common
-  Cyrillic, Greek and Armenian look-alikes are read;
-- encodings inside text: quoted-printable ("L=C3=B3pez", and a soft line break "Mari=" then "sol"), entities or
-  percent-encoding applied twice ("&amp;oacute;", "%25C3%25B3"), a word broken across lines with a hyphen ("Mari-" then
-  "sol"), and base64, rot13 or reversed text;
+- other look-alike letters: Lisu, Canadian syllabics, Coptic and the rest of Unicode's confusables list beyond the
+  common Cyrillic, Greek and Armenian look-alikes, the small capitals and Cherokee. Latin letters of living
+  orthographies that look like others (Icelandic þ, the Ewe letters ƒ, ɣ and ʋ) are left as they are on purpose: a
+  name written in them would match a different name, and a memory matched so goes whole;
+- encodings inside text: entities or percent-encoding applied twice ("&amp;oacute;", "%25C3%25B3"; the intake screen
+  decodes these since round A, the erase doesn't), a word broken across lines with a hyphen ("Mari-" then "sol"),
+  and base64, rot13 or reversed text;
 - nicknames, initials, a role ("our board chair"), a misspelling, or the parts in another order ("Quintero, Marisol").
 
 What to do: before erasing, list every form you know as an alias (`--alias`), including other grammatical cases of the
@@ -143,35 +170,25 @@ Also:
 
 - The erase removes a memory that names the person whole, with whatever else it said; the dry run shows each one, so
   you can store again, without the name, what should stay.
-- It doesn't reach records that aren't memory: approval-queue items, grant drafts, the grant hunt's files, the
-  quarantine, logs and backups. The dry run lists the files that name the person, for you to deal with by hand; copies
-  outside Apolaki's folder are beyond it.
+- It doesn't change records that aren't memory. Since round A the dry run lists each place in an approval-queue item
+  (with its status, such as pending or approved), a grant draft or a grant hunt file that names the person, with the
+  text around it, read as memory is read. Other files (the quarantine, logs, backups) are listed by name.
+  You deal with each by hand; copies outside Apolaki's folder are beyond it. A draft in a binary format (.docx,
+  .pdf) is listed only if its bytes show the name.
 - A name shorter than three letters can't be erased by.
 - A short alias lists many near-matches to rule on: "Ana" in a store of 1,500 memories gave 70 words like "analyst"
   and "anaemic", each needing `--not-them`.
-- It is slow on a large store: on the test machine, about half a minute for 1,500 memories, the dry run and the erase
-  together (round 4 added reading every blob as UTF-16 and UTF-32, which about doubled it).
-- A text column holding bytes that aren't valid UTF-8 (written with CAST(... AS TEXT)) stops the dry run with a Python
-  error before anything is changed. It exits 1, the same code as an incomplete erase; read the message.
-- Rows are read in UTF-16 and UTF-32 as well as UTF-8, but not every row: every blob is, and every text cell that
-  holds a NUL or another control character (tab and line breaks aside), which is how wide text written into a text
-  column with CAST(... AS TEXT) reads back (round 5; round 4 read only blobs, and such a cell gave a false success).
-  **Open, and wider than one script: the erase can report success with the name still in the database** when a
-  table or column added by hand holds the name as wide text (UTF-16 or UTF-32) in a text cell that has no NUL or
-  other control character the check looks for. Two ways this happens:
-  - a single-word name in **Devanagari (Hindi, Marathi, Nepali), Gurmukhi (Punjabi) or Malayalam**, stored as UTF-16:
-    in those scripts the high byte of every character is a tab, line feed or carriage return, which the check
-    deliberately ignores (48 of 48 planted cases gave a false success);
-  - a name in a script such as Chinese, with no space or punctuation, whose UTF-16 bytes happen to be valid UTF-8
-    with no control character.
-
-  Apolaki's own code stores text as UTF-8, so this needs a table or column someone added by hand and filled with
-  wide text. **If your database has tables or columns Apolaki didn't create, don't rely on the erase report: check
-  those by hand.** The planned fix is for erase to certify only Apolaki's own tables and to ask a person to confirm
-  whenever it finds hand-added ones. Reading every text cell wide would also close it, at about eight times the time
-  for each cell.
-- The final byte-by-byte check of the database files reads UTF-8 only. The database is compacted with deleted bytes
-  zeroed, so this matters only if that compaction failed, which the erase reports.
+- It is slow on a large store: about half a minute for 1,500 memories, the dry run and the erase together, on the
+  round 4 test machine. Round A made the dry run about a fifth slower and the check's reading of the rows about 1.6
+  times as slow (CPU time on a 1,500-memory test store with the vector indexes, the least of three runs on a busy
+  machine: 7.2 s against 6.1 s, and 6.1 s against 3.8 s), mostly by reading every text cell wide.
+- A vector index made by another version of sqlite-vec than the one the erase loads may have tables the erase doesn't
+  expect. They are listed as not Apolaki's, and you check them like any other (they hold vectors).
+- The final byte-by-byte check of the database files reads UTF-8 only, and takes no markup or quoted-printable out.
+  The database is compacted with deleted bytes zeroed, so this matters only if that compaction failed, which the
+  erase reports.
+- The dry run exits 0 even when it lists something the erase will refuse on. The erase exits 2 when it refuses, 4
+  when it refuses on text that isn't valid UTF-8, and 1 when it ran but its check found something left.
 - On a test store of 1,500 memories with the alias "Ana", the round 3 version ended "ERASE INCOMPLETE" in two runs of
   three (its check read the name in the database's bytes), and succeeded in the third. The cause wasn't looked into.
   An incomplete erase is recorded as not verified, never as a success: run the dry run again and read what it says is
@@ -191,6 +208,16 @@ vector indexes' chunks read wide as well, UTF-32 decoded with the codec's error 
 read in each other's place, the wide readings folded by the slow fold (all four change only the time an erase takes),
 and the intake's early return for a text with no "<" (the reader's view already decodes such a text's entities).
 Round 5's run (20 mutants of the lines it changed, from a frozen copy) killed 19 on an assertion; the one left, trying
-a text cell's Latin-1 bytes when it holds a character past Latin-1, fails a test only with an encoding error. The
-strict expected failures in `tests/test_red_team_probes.py` (KNOWN_WRONG) list the ethics checks' known wrong
-verdicts; one that starts passing fails the run, so that list stays true.
+a text cell's Latin-1 bytes when it holds a character past Latin-1, fails a test only with an encoding error. Round
+A's run (53 mutants of the lines it changed, from a git archive of 4166f87, each against the test file that covers it)
+killed 40 on an assertion. Five were caught first by an error a test didn't expect; four of them fail assertions in
+the tests aimed at them when the whole file runs, and the fifth (the refusal on text that isn't UTF-8, removed) did once
+its test caught any refusal and asserted the kind. Eight lived. Three are equivalent: keeping wide readings that are
+all noise, not skipping UTF-32 of bytes with no NUL (both change only the time an erase takes), and the byte check's
+explanation of a match in a cell that isn't UTF-8, which the check reports as unreadable either way. Five were missing
+tests, which 3b724bc adds: an unreadable cell read wide from its stored bytes, sqlite_stat1 counted as SQLite's, a
+near-match only the decoded tags show, a record's JSON keys, and a record file listed once. Re-run from that commit's
+archive, each of the five, and the refusal, is killed on an assertion: 50 of 53 in all. Two of round 5's unit tests
+pinned its hint (a plain text cell had exactly one reading; a vector had exactly 12) and now pin round A's reading
+instead. The strict expected failures in `tests/test_red_team_probes.py` (KNOWN_WRONG) list the ethics checks' known
+wrong verdicts; one that starts passing fails the run, so that list stays true.
