@@ -10,8 +10,9 @@ down in the code. Round 4 fixed only three things: honest copy that round 3 had 
 person, and injection text hidden in an HTML attribute. Round 5 took back one of round 4's fixes, which let invented
 reviews through (section 3 lists the honest copy that is blocked again), and closed the same erase gap for text
 cells. Round A (2026-11-07) changed only code that decodes or protects data, nothing in the ethics checks: the intake
-screen's decoding (section 4) and the erase (section 5), each section saying what it closed and what remains.
-Everything else below is still open.
+screen's decoding (section 4) and the erase (section 5), each section saying what it closed and what remains. Round
+A2 (2026-11-08) closed what round A's verifier found in the same two places, again with no change to the ethics
+checks. Everything else below is still open.
 
 ## 1. The ethics checks: what still gets through
 
@@ -111,11 +112,21 @@ letters, HTML tags and entities, and since round 4 an instruction hidden in an H
 decodes entities and percent-encoding again and again until nothing changes, so text escaped twice is read
 ("&amp;nbsp;", "&amp;lt;|im_start|&amp;gt;", "Ignore%20all%20previous", "%2520"); closes a tag left open at the end
 of the text; and reads the words inside a tag where they stand ("Ignore all <b previous instructions", which a
-browser hides and a model reads). A text still changing after 16 rounds of decoding is held for you. It still misses:
+browser hides and a model reads). A text still changing after 16 rounds of decoding is held for you.
+
+Since round A2 that holds whichever way the text is read: a tag or comment could hide the nesting from the raw text
+("Ignore&<b></b>amp;amp;..." decodes once as it stands, and 17 times over once the tag is out), and such a text was
+let through with no flag. A "+" written for a space is read as one ("Ignore+all+previous+instructions", in a link too,
+or written as "%2B"). And a long run of letters inside a tag no longer stalls the screen: two of its patterns took time
+that grew with the square of the run's length (8,000 letters took 6 and 14 seconds of CPU), so one crafted listing or
+funder page could hold up the unattended grant hunt; each now takes a few milliseconds there, and a whole screen of
+such a text about a tenth of a second. It still misses:
 
 - a paraphrase, another language, or an instruction split across texts screened separately;
 - a Markdown link splitting the words, a backslash escape ("\u0069nstructions" for "instructions"), base64 or rot13,
-  a tag left open anywhere but at the end of the text, and an instruction partly inside a <script> block.
+  a tag left open anywhere but at the end of the text, and an instruction partly inside a <script> block;
+- a percent escape that isn't valid UTF-8 standing for the space ("Ignore%C0%A0all previous instructions"), and
+  stray characters between the words ("Ignore&&&& all previous instructions"): the patterns need a space there.
 
 It also holds research that only discusses injection, like an attack, until a person releases it. The chat with the
 person at the keyboard isn't screened, nothing reads Discord yet, and a grant job deployed before these checks doesn't
@@ -150,6 +161,26 @@ It also reads, since round A: a comma, semicolon, colon or middle dot between th
 and "Mari=" at the end of one line with "sol" on the next); and small capitals ("ᴍᴀʀɪsᴏʟ") and the Cherokee letters
 that look Latin ("Ꮇarisol").
 
+Round A2 (2026-11-08) closed what round A's verifier found:
+
+- **Generated columns.** SQLite's usual list of a table's columns leaves out a column computed from an expression.
+  One added by hand to the memories table, holding the name as character codes or base64, was neither listed nor
+  read: the erase reported "verified for Apolaki's tables; 0 hand-added" while every row still returned the name. It
+  is listed now (for example `--checked column:memories.extra`), and its values are read.
+- **Apolaki's own tables and indexes are compared by what they say, not only by name.** One rebuilt by hand with more
+  in its definition than Apolaki's code writes (a default or a CHECK holding base64, an index with a WHERE) is listed
+  as `definition:NAME` and needs your check like a table added by hand.
+- **More forms of the name**: a bullet, the dot and bullet operators, the word-separator middle dot, the ideographic
+  and Arabic commas, and "&" between the parts ("Marisol•Quintero", "Marisol&Quintero"), each missed entirely before;
+  entities and percent-encoding applied twice or more ("&amp;oacute;", "%25C3%25B3"), up to 16 times over, as the
+  intake screen reads them. The Cherokee letter Ꮁ is read as the Greek Γ it looks like, as Unicode's list says; round
+  A read it as r, so it could match a name with an r in it.
+- **A file whose name names the person** is listed in the dry run ("grant-drafts/marisol_quintero_memorial_draft.md",
+  or any file in a folder so named). Before, only what files held was read, apart from the wiki.
+- **Text that isn't UTF-8 in the engine's belief files** is the same refusal as in a text cell, exit code 4. The
+  belief log stopped the dry run with a Python error before. And, deciding a question round A left open, the dry run
+  itself now exits 4 when it lists such text, so it looks like the refusal it predicts.
+
 It can still report success while the person is still there, in Apolaki's own tables, in a form it doesn't read:
 
 - grammatical case endings: Russian and other Slavic languages change a name's ending ("Марию" for "Мария", "Ивана
@@ -158,9 +189,14 @@ It can still report success while the person is still there, in Apolaki's own ta
   common Cyrillic, Greek and Armenian look-alikes, the small capitals and Cherokee. Latin letters of living
   orthographies that look like others (Icelandic þ, the Ewe letters ƒ, ɣ and ʋ) are left as they are on purpose: a
   name written in them would match a different name, and a memory matched so goes whole;
-- encodings inside text: entities or percent-encoding applied twice ("&amp;oacute;", "%25C3%25B3"; the intake screen
-  decodes these since round A, the erase doesn't), a word broken across lines with a hyphen ("Mari-" then "sol"),
-  and base64, rot13 or reversed text;
+- encodings inside text: entities or percent-encoding applied more than 16 times over (read as decoded 16 times: the
+  intake screen holds such text for you, the erase doesn't refuse on it), a word broken across lines with a hyphen
+  ("Mari-" then "sol"), and base64, rot13 or reversed text;
+- an index added by hand (found in round A2, still open). An index Apolaki didn't make isn't listed, on the reasoning
+  that it holds only its own table's values, but an index on an expression keeps the expression's values: base64 of
+  the name written into one was certified, with the base64 still in the database file. On a database someone has
+  changed by hand, read its indexes before you trust the result (`SELECT name, sql FROM sqlite_master WHERE type =
+  'index'`);
 - nicknames, initials, a role ("our board chair"), a misspelling, or the parts in another order ("Quintero, Marisol").
 
 What to do: before erasing, list every form you know as an alias (`--alias`), including other grammatical cases of the
@@ -172,7 +208,8 @@ Also:
   you can store again, without the name, what should stay.
 - It doesn't change records that aren't memory. Since round A the dry run lists each place in an approval-queue item
   (with its status, such as pending or approved), a grant draft or a grant hunt file that names the person, with the
-  text around it, read as memory is read. Other files (the quarantine, logs, backups) are listed by name.
+  text around it, read as memory is read. Other files (the quarantine, logs, backups) are listed by name, and since
+  round A2 so is any file whose own name, or a folder it is in, names the person.
   You deal with each by hand; copies outside Apolaki's folder are beyond it. A draft in a binary format (.docx,
   .pdf) is listed only if its bytes show the name.
 - A name shorter than three letters can't be erased by.
@@ -181,14 +218,18 @@ Also:
 - It is slow on a large store: about half a minute for 1,500 memories, the dry run and the erase together, on the
   round 4 test machine. Round A made the dry run about a fifth slower and the check's reading of the rows about 1.6
   times as slow (CPU time on a 1,500-memory test store with the vector indexes, the least of three runs on a busy
-  machine: 7.2 s against 6.1 s, and 6.1 s against 3.8 s), mostly by reading every text cell wide.
+  machine: 7.2 s against 6.1 s, and 6.1 s against 3.8 s), mostly by reading every text cell wide. Round A2 changed
+  neither measurably: on the same test store, the least of three runs each on a quieter machine, the dry run took
+  7.0 s against 6.9 s for round A's code, and the check's reading of the rows 5.7 s against 5.7 s.
 - A vector index made by another version of sqlite-vec than the one the erase loads may have tables the erase doesn't
   expect. They are listed as not Apolaki's, and you check them like any other (they hold vectors).
 - The final byte-by-byte check of the database files reads UTF-8 only, and takes no markup or quoted-printable out.
   The database is compacted with deleted bytes zeroed, so this matters only if that compaction failed, which the
   erase reports.
-- The dry run exits 0 even when it lists something the erase will refuse on. The erase exits 2 when it refuses, 4
-  when it refuses on text that isn't valid UTF-8, and 1 when it ran but its check found something left.
+- The dry run exits 0 even when it lists something the erase will refuse on, apart from text that isn't valid UTF-8,
+  where it exits 4 as the erase will (round A2). The erase exits 2 when it refuses, 4 when it refuses on text that
+  isn't valid UTF-8 (a text cell, or one of the engine's belief files), and 1 when it ran but its check found
+  something left.
 - On a test store of 1,500 memories with the alias "Ana", the round 3 version ended "ERASE INCOMPLETE" in two runs of
   three (its check read the name in the database's bytes), and succeeded in the third. The cause wasn't looked into.
   An incomplete erase is recorded as not verified, never as a success: run the dry run again and read what it says is
@@ -219,5 +260,16 @@ tests, which 3b724bc adds: an unreadable cell read wide from its stored bytes, s
 near-match only the decoded tags show, a record's JSON keys, and a record file listed once. Re-run from that commit's
 archive, each of the five, and the refusal, is killed on an assertion: 50 of 53 in all. Two of round 5's unit tests
 pinned its hint (a plain text cell had exactly one reading; a vector had exactly 12) and now pin round A's reading
-instead. The strict expected failures in `tests/test_red_team_probes.py` (KNOWN_WRONG) list the ethics checks' known
-wrong verdicts; one that starts passing fails the run, so that list stays true.
+instead. Round A2's run (43 mutants of the lines it changed, from a git archive of cf81a4d, each against the whole
+test file that covers it) killed 40 on an assertion, among them round A's four survivors that lacked a test (a
+virtual table whose module isn't loaded, decoding after a tag's words are kept, quoted-printable with markup in it,
+and each look-alike entry against its source) and round A's refusal on text that isn't UTF-8 with the text factory
+gone, whose kill is now an assertion, not a sqlite3 error. Two kills needed new tests, which 53388e8 adds and a
+re-run from it confirms: the words view's own report of a decoding that doesn't settle (every planted case was also
+met by the reader's view), and a size at which the attribute pattern without its lookbehind fails the time bound on an
+idle machine (at 8,000 letters it failed only under load). Three live, each equivalent: the attribute pattern without
+its possessive quantifiers but with its lookbehind (still linear: a run is tried once, from its start); the raw view's
+report of a decoding that doesn't settle (the words view and the form view decode the raw text too, and report it);
+and the form view's report after reading "+" as a space (a space makes no entity or percent escape, so that decoding
+settles whenever the one before it did). The strict expected failures in `tests/test_red_team_probes.py` (KNOWN_WRONG)
+list the ethics checks' known wrong verdicts; one that starts passing fails the run, so that list stays true.

@@ -92,13 +92,13 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   every other file the name is in; with the dry run's code it removes exactly that, rebuilds what depended on it,
   compacts the database and checks that the name is gone: every text column of every table, escapes decoded and markup
   taken out, and the database files byte by byte. A trace left, or a step that failed, is reported as an incomplete
-  erase. The name inside a longer word ("Quinterova") is a near-match: the dry run lists each one, and the erase
-  refuses until a person rules it someone else (`--not-them`) or gives it as an alias. It certifies only Apolaki's own
-  tables: a table, column, view or trigger its code didn't make is listed, and the erase refuses until a person says
-  they checked each (`--checked`). It finds people by the names given, and it leaves records that aren't memory (the
-  approval queue, grant files, the quarantine) for a person to handle, listing each place in them that names the
-  person. [docs/DATA_LIFECYCLE.md](docs/DATA_LIFECYCLE.md) says what Apolaki keeps, about
-  whom, for how long (until a person removes it) and who can erase it.
+  erase. The name inside a longer word ("Quinterova") is a near-match: the dry run lists each one, and the erase refuses
+  until a person rules it someone else (`--not-them`) or gives it as an alias. It certifies only Apolaki's own tables: a
+  table, column, view or trigger its code didn't make, or one of its own whose definition says more than its code
+  writes, is listed, and the erase refuses until a person says they checked each (`--checked`). It finds people by the
+  names given, and it leaves records that aren't memory (the approval queue, grant files, the quarantine) for a person
+  to handle, listing each place in them that names the person. [docs/DATA_LIFECYCLE.md](docs/DATA_LIFECYCLE.md) says
+  what Apolaki keeps, about whom, for how long (until a person removes it) and who can erase it.
 - **A grant outcome log.** `python -m apolaki.grants outcome KEY applied|awarded|declined|no_reply --date D --by NAME`
   appends what happened to an application to `grant-hunt/outcomes.jsonl`, beside the grant hunt's seen-list, with
   one primary reason and its source when there is one (no reason without a source). `python -m apolaki.grants

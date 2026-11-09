@@ -47,14 +47,15 @@ runs a second dry run. A check that still finds the name, or a compaction or log
 What counts as the name: case, accents, the common look-alike letters (Cyrillic, Greek and Armenian ones that look
 Latin, small capitals, and Cherokee letters that look Latin; not every look-alike, docs/KNOWN_LIMITS.md) and invisible
 characters don't matter; the parts of a name may be joined by spaces, hyphens or dashes, apostrophes, full stops,
-underscores, markup characters (`*`, `[`, `]`, `(`, `)`, `/` and the like), commas, semicolons, colons, middle dots or
-nothing ("Jean-Luc Moreau" also finds "Jean Luc Moreau", "JeanLuc Moreau" and "jean_luc_moreau"; "Marisol Quintero"
-finds "**Marisol** Quintero", "Marisol/Quintero" and "Marisol,Quintero"); escaped text is read decoded (the store
-writes tags as JSON, so "L\u00f3pez" on disk is "López"), markup is read taken out (a Markdown link "[Marisol](url)
-Quintero", HTML tags and entities, percent-encoding), and quoted-printable is read decoded ("L=C3=B3pez", soft line
-breaks included). A blob (binary data in a column) is read as text too, in Latin-1, UTF-16 and UTF-32, either byte
-order, with a byte-order mark or without, and so is every text cell in UTF-16 and UTF-32, except the vector indexes'
-own chunks, which the erase drops and refills. A digit after the name is still the name
+underscores, markup characters (`*`, `[`, `]`, `(`, `)`, `/` and the like), commas, semicolons, colons, middle dots,
+bullets, the ideographic and Arabic commas, `&` or nothing ("Jean-Luc Moreau" also finds "Jean Luc Moreau", "JeanLuc
+Moreau" and "jean_luc_moreau"; "Marisol Quintero" finds "**Marisol** Quintero", "Marisol/Quintero" and
+"Marisol,Quintero"); escaped text is read decoded (the store writes tags as JSON, so "L\u00f3pez" on disk is "López"),
+markup is read taken out (a Markdown link "[Marisol](url) Quintero", HTML tags and entities, percent-encoding, the last
+two decoded until nothing changes, so "&amp;oacute;" is read as "ó"), and quoted-printable is read decoded
+("L=C3=B3pez", soft line breaks included). A blob (binary data in a column) is read as text too, in Latin-1, UTF-16 and
+UTF-32, either byte order, with a byte-order mark or without, and so is every text cell in UTF-16 and UTF-32, except the
+vector indexes' own chunks, which the erase drops and refills. A digit after the name is still the name
 ("marisol.quintero85@...", "@MarisolQuintero1990"). In scripts written without spaces (Chinese, Japanese, Thai and the
 like) and in Korean there is no word edge to keep, so a mention inside a sentence is found, and a character of those
 scripts next to a name in another script is a separator ("Quintero" with a Japanese honorific attached). An Arabic
@@ -70,19 +71,21 @@ accepts the name, read without word edges in the database's bytes, only where a 
 
 If the dry run finds the name in a table or column the erase doesn't remove from, or in the database's schema (a
 table, view, trigger or index name or definition, a column default), it lists it and the erase refuses before
-changing anything, until a person has dealt with it. So does a text cell that isn't valid UTF-8 (exit code 4), since
-what it says can't be read with certainty.
+changing anything, until a person has dealt with it. So does a text cell, or one of the engine's belief files, that
+isn't valid UTF-8 (exit code 4, and the dry run that lists such a cell exits 4 too), since what it says can't be read
+with certainty.
 
-The erase certifies only Apolaki's own tables. Every table, column, view and trigger Apolaki's code didn't make is
-listed in the dry run, whatever it holds, and the erase refuses until a person has checked each by hand and names it
-with `--checked`, exactly as the dry run prints it (`table:NAME`, `column:TABLE.COLUMN`, `view:NAME`,
-`trigger:NAME`). The report then reads "verified for Apolaki's tables; N hand-added ... checked by a person", and the
-erasure record lists what the person named.
+The erase certifies only Apolaki's own tables. Every table, column (a generated column too), view and trigger Apolaki's
+code didn't make is listed in the dry run, whatever it holds, and so is any of Apolaki's own tables and indexes whose
+definition says more than its code writes (a default, a constraint, an index's expression); the erase refuses until a
+person has checked each by hand and names it with `--checked`, exactly as the dry run prints it (`table:NAME`,
+`column:TABLE.COLUMN`, `view:NAME`, `trigger:NAME`, `definition:NAME`). The report then reads "verified for Apolaki's
+tables; N hand-added ... checked by a person", and the erasure record lists what the person named.
 
-What it leaves to a person: the records and files the dry run lists as not changed (approval-queue items, grant
-drafts, grant-hunt files, the quarantine, logs, backups). They are records of what was drafted, reviewed or received,
-and are edited or deleted by hand. It finds the person only by the name and aliases given, so list nicknames and
-other spellings as aliases. A memory that names the person goes whole.
+What it leaves to a person: the records and files the dry run lists as not changed (approval-queue items, grant drafts,
+grant-hunt files, the quarantine, logs, backups), including a file whose name names the person. They are records of what
+was drafted, reviewed or received, and are edited or deleted by hand. It finds the person only by the name and aliases
+given, so list nicknames and other spellings as aliases. A memory that names the person goes whole.
 
 Who can erase: anyone who can run commands as the account that owns `$APOLAKI_HOME`. There is no erase over MCP,
 and nothing erases on Apolaki's own initiative.
