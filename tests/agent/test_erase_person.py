@@ -1815,3 +1815,120 @@ def test_records_that_arent_memory_are_listed_place_by_place_and_never_changed(h
     done = X.erase(PERSON, confirm=p.code, by="x", reason="asked")
     assert {f: f.read_bytes() for f in records} == before
     assert {path for path, _ in done["elsewhere"]} >= {r["file"] for r in p.records}
+
+
+# ---- round A2 (2026-11-08): what round A's verifier found -----------------------------------------------------------
+# Item 1: PRAGMA table_info leaves a generated column out, so one added by hand to memories was neither listed nor read:
+# the erase recorded verified:true while every SELECT of memories still returned the name. And Apolaki's own tables
+# were known by name alone, so a hand-rebuilt one whose DEFAULT or CHECK held base64 of the name was certified.
+def b64(text):
+    import base64
+    return base64.b64encode(text.encode()).decode()
+
+
+def own_schema_with(home, schema):
+    """A database made from a changed copy of memory_store's SCHEMA (a table rebuilt by hand), then used by the store."""
+    assert schema != ms.SCHEMA, "the setup lost its point"
+    (home / "db").mkdir(parents=True)
+    con = sqlite3.connect(str(home / "db" / "apolaki.db"))
+    con.executescript(schema)
+    con.close()
+
+
+@pytest.mark.parametrize("kind", ["VIRTUAL", "STORED"])
+def test_a_generated_column_added_by_hand_is_listed_and_stops_a_verified_result(home, kind):
+    """A VIRTUAL one added with ALTER TABLE; a STORED one, which ALTER TABLE can't add, in a memories table rebuilt by
+    hand. Either way it holds base64 of the name, which the erase doesn't read: only the person's check stands in."""
+    from apolaki.agent import erase as X
+    column = f"extra TEXT GENERATED ALWAYS AS ('{b64(PERSON)}') {kind}"
+    if kind == "STORED":
+        own_schema_with(home, ms.SCHEMA.replace("    archive_reason TEXT\n", f"    archive_reason TEXT,\n    {column}\n"))
+    plant(home)
+    if kind == "VIRTUAL":
+        hand_add(home, f"ALTER TABLE memories ADD COLUMN {column}")
+    assert db_rows(home, "SELECT DISTINCT extra FROM memories") == [(b64(PERSON),)], "the setup lost its point"
+    p = X.plan(PERSON)
+    assert p.checks() == ["column:memories.extra"], X.describe(p)
+    assert "column 'memories.extra': --checked 'column:memories.extra'" in X.describe(p)
+    before = snapshot(home)
+    with pytest.raises(X.EraseError, match="nobody has said they checked: column:memories.extra"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert snapshot(home) == before and not (home / "erasures.jsonl").exists()
+
+
+def test_a_generated_columns_values_are_read(home, capsys):
+    """The verifier's case: the name as character codes, so only the column's values show it. Every memory names her
+    there, so every memory is listed to go, and the column is listed for a person's check; the command line refuses
+    (exit 2) without it, and no record says verified."""
+    import apolaki.engine as E
+    from apolaki.agent import erase as X
+    plant(home)
+    codes = ",".join(str(ord(c)) for c in PERSON)
+    hand_add(home, f"ALTER TABLE memories ADD COLUMN extra TEXT GENERATED ALWAYS AS (char({codes})) VIRTUAL")
+    p = X.plan(PERSON)
+    assert sorted(m["id"] for m in p.memories) == sorted(r[0] for r in db_rows(home, "SELECT id FROM memories"))
+    assert p.checks() == ["column:memories.extra"], X.describe(p)
+    assert E.main(["erase-person", PERSON, "--confirm", p.code, "--by", "x", "--reason", "asked"]) == 2
+    assert "column:memories.extra" in capsys.readouterr().err and not (home / "erasures.jsonl").exists()
+
+
+SOURCE_DEFAULT = "    source TEXT DEFAULT '',\n"
+
+
+@pytest.mark.parametrize("change", [
+    lambda schema: schema.replace(SOURCE_DEFAULT, f"    source TEXT DEFAULT '{b64(PERSON)}',\n"),
+    lambda schema: schema.replace("    archive_reason TEXT\n", f"    archive_reason TEXT,\n"
+                                  f"    CHECK (memory_type != '{b64(PERSON)}')\n"),
+    lambda schema: schema.replace("    content TEXT NOT NULL,\n",                      # memories' (the first)
+                                  f"    content TEXT NOT NULL CHECK (content != '{b64(PERSON)}'),\n", 1),
+], ids=["default", "table check", "column check"])
+def test_apolakis_own_table_rebuilt_with_more_in_its_definition_is_listed(home, change):
+    from apolaki.agent import erase as X
+    own_schema_with(home, change(ms.SCHEMA))
+    plant(home)
+    p = X.plan(PERSON)
+    assert p.checks() == ["definition:memories"] and p.schema == [], X.describe(p)
+    with pytest.raises(X.EraseError, match="nobody has said they checked: definition:memories"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked", checked=("definition:memories",))
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["checked_by_person"] == ["definition:memories"]
+
+
+def test_apolakis_own_index_rebuilt_with_more_in_its_definition_is_listed(home):
+    """An index on an expression or with a WHERE keeps values of its own: one of Apolaki's indexes, dropped and made
+    again with base64 in its WHERE, has Apolaki's name, and only its definition shows the difference."""
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, "DROP INDEX idx_memories_type",
+             f"CREATE INDEX idx_memories_type ON memories(memory_type) WHERE source != '{b64(PERSON)}'")
+    assert X.plan(PERSON).checks() == ["definition:idx_memories_type"]
+
+
+def test_a_definition_is_read_without_its_whitespace_or_column_order():
+    from apolaki.agent import erase as X
+    one = X._definition("CREATE TABLE t (\n  id TEXT PRIMARY KEY,\n  a TEXT DEFAULT ''\n, b INTEGER DEFAULT 0)")
+    assert one == X._definition("CREATE TABLE t (id TEXT PRIMARY KEY, b INTEGER DEFAULT 0, a TEXT DEFAULT '')")
+    assert one != X._definition("CREATE TABLE t (id TEXT PRIMARY KEY, a TEXT DEFAULT 'x', b INTEGER DEFAULT 0)")
+    assert one != X._definition("CREATE TABLE t (id TEXT PRIMARY KEY, a TEXT DEFAULT '', b INTEGER DEFAULT 0) "
+                                "WITHOUT ROWID")
+    assert X._definition("CREATE TABLE t (a TEXT CHECK (a IN ('x, y', 'z')), b)")[1] == {
+        ("a", "TEXT", "CHECK", "(", "a", "IN", "(", "'x, y'", ",", "'z'", ")", ")"), ("b",)}
+    assert X._definition(None) is None
+
+
+def test_a_virtual_table_whose_module_isnt_loaded_is_listed_by_its_name(home):
+    """Its columns can't be read here (no such module), so it counts by its name: listed for a person's check, and the
+    dry run doesn't stop on it (A15 in round A's verifier run)."""
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, "PRAGMA writable_schema = ON",
+             "INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'ghost', 'ghost', 0, "
+             "'CREATE VIRTUAL TABLE ghost USING ghostmod(body)')")
+    with pytest.raises(sqlite3.OperationalError, match="no such module"):
+        db_rows(home, "SELECT * FROM ghost")
+    try:
+        p = X.plan(PERSON)
+    except sqlite3.Error as e:
+        pytest.fail(f"a virtual table whose module isn't loaded broke the dry run: {e!r}")
+    assert p.checks() == ["table:ghost"], X.describe(p)

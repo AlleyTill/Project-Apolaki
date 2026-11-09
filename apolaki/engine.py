@@ -255,8 +255,8 @@ def main(argv=None) -> int:
     x.add_argument("--not-them", action="append", default=[], metavar="WORD",
                    help="a near-match the dry run listed that is someone else; repeat for each (needed for every one)")
     x.add_argument("--checked", action="append", default=[], metavar="THING",
-                   help="a table, column, view or trigger the dry run listed as not Apolaki's, which a person has "
-                        "checked by hand for the name; repeat for each (needed for every one)")
+                   help="a table, column, view, trigger or definition the dry run listed as not Apolaki's, which a "
+                        "person has checked by hand for the name; repeat for each (needed for every one)")
     a = ap.parse_args(argv)
     if a.cmd == "erase-person":
         from .agent import erase as X

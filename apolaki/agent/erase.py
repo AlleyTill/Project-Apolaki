@@ -66,14 +66,16 @@ removes it. Before round A such a cell stopped the dry run with a Python error.
 
 It certifies only Apolaki's own schema (round A): the tables and columns memory_store makes, the vector indexes'
 tables (as the sqlite-vec loaded here makes them) and SQLite's own counters. Every other table, every column added to
-one of Apolaki's tables, and every view and trigger is listed in the dry run as not Apolaki's, whatever it holds, and
-the erase refuses until a person has checked each by hand and names each with --checked (exactly as the dry run
-prints it: "table:NAME", "column:TABLE.COLUMN", "view:NAME", "trigger:NAME"): a table or column for the name in any
-form, a trigger for what it copies when the erase deletes rows (it fires then). The erase still reads those tables and
-columns, and refuses on a name it finds there; the person's check covers what it can't read (another encoding, base64,
-a compressed or encrypted value). The record and the command line then read "verified for Apolaki's tables; N
-hand-added ... checked by a person". An index isn't listed: it holds only its own table's values, which go with their
-rows.
+one of Apolaki's tables (a generated column too, since round A2), every view and trigger, and every one of Apolaki's
+own tables and indexes whose definition says more than its code's (a default, a CHECK, an index's expression or
+WHERE: since round A2 they are compared by definition, not by name only) is listed in the dry run as not Apolaki's,
+whatever it holds, and the erase refuses until a person has checked each by hand and names each with --checked
+(exactly as the dry run prints it: "table:NAME", "column:TABLE.COLUMN", "view:NAME", "trigger:NAME",
+"definition:NAME"): a table, column or definition for the name in any form, a trigger for what it copies when the
+erase deletes rows (it fires then). The erase still reads those tables and columns, and refuses on a name it finds
+there; the person's check covers what it can't read (another encoding, base64, a compressed or encrypted value). The
+record and the command line then read "verified for Apolaki's tables; N hand-added ... checked by a person". An index
+Apolaki didn't make isn't listed: it holds its own table's values, which go with their rows.
 Then it rebuilds the vector indexes from what remains, VACUUMs the database (with secure_delete on, so the deleted rows
 are zeroed even if VACUUM can't run) and truncates its write-ahead log. Its check reads every text column of every
 table again; reads back every byte of the database files (folding case, accents, look-alike letters and invisible
@@ -95,7 +97,7 @@ What it can't do:
     aliases, and read what each finds in the dry run. The byte check of the database files doesn't take markup out,
     nor read UTF-16 or UTF-32 (the rows are read with markup taken out, and in both). See docs/KNOWN_LIMITS.md
     section 5.
-  - certify a table, column, view or trigger Apolaki's code didn't make: a person checks those (above).
+  - certify a table, column, view, trigger or definition Apolaki's code didn't make: a person checks those (above).
   - erase by a name shorter than three letters (a two-character Chinese name included): it would match inside too much.
   - keep the rest of a memory. A memory that names the person goes whole, with whatever else it said; the dry run
     shows each one, so a person can store again what should stay, without the name.
@@ -450,14 +452,22 @@ def _q(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
 
 
+def _columns(con, table: str) -> list[str]:
+    """A table's columns, generated ones included. PRAGMA table_info leaves a generated column out, so before round A2
+    one added by hand (ALTER TABLE ... GENERATED ALWAYS AS (...) VIRTUAL) was neither listed as not Apolaki's nor read,
+    and an erase with the name in it on every kept row recorded verified:true; table_xinfo lists it (SELECT * reads its
+    values)."""
+    return [r[1] for r in con.execute(f"PRAGMA table_xinfo({_q(table)})")]
+
+
 def _tables(con) -> list[tuple[str, list[str]]]:
-    """Every ordinary table and its columns. A virtual table (the vec0 indexes) is read through its shadow tables,
-    which are ordinary ones."""
+    """Every ordinary table and its columns (_columns). A virtual table (the vec0 indexes) is read through its shadow
+    tables, which are ordinary ones."""
     out = []
     for name, sql in con.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name").fetchall():
         if (sql or "").lstrip().upper().startswith("CREATE VIRTUAL"):
             continue
-        out.append((name, [r[1] for r in con.execute(f"PRAGMA table_info({_q(name)})")]))
+        out.append((name, _columns(con, name)))
     return out
 
 
@@ -787,24 +797,74 @@ _SQLITE_OWN = frozenset({("table", "sqlite_sequence", None), ("table", "sqlite_s
 
 def _objects(con) -> set[tuple[str, str, str | None]]:
     """The schema as (type, name, None) for each table, index, view and trigger, and ("column", table, column) for each
-    column of each table. A virtual table whose module isn't loaded here has no columns to read: it counts by its
-    name alone."""
+    column of each table, generated ones included (_columns). A virtual table whose module isn't loaded here has no
+    columns to read: it counts by its name alone."""
     out = set()
     for kind, name in con.execute("SELECT type, name FROM sqlite_master").fetchall():
         out.add((kind, name, None))
         if kind == "table":
             try:
-                out |= {("column", name, r[1]) for r in con.execute(f"PRAGMA table_info({_q(name)})")}
+                out |= {("column", name, c) for c in _columns(con, name)}
             except sqlite3.Error:
                 pass
     return out
 
 
+# SQL as the definition comparison reads it: a string literal or a quoted name whole, a word, or any other character.
+_SQL_TOKEN = re.compile(r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]|\w+|\S""")
+
+
+def _definition(sql: str | None) -> tuple | None:
+    """A schema object's definition, read so that only what it says counts (round A2): (the tokens before its first
+    parenthesis, the items between it and the one that closes it as a set of token tuples, the tokens after), so
+    whitespace doesn't count, nor where a column stands in the list (ALTER TABLE ADD COLUMN, which memory_store's
+    migration uses, writes the column at the end). None for an object SQLite made without a statement."""
+    if sql is None:
+        return None
+    tokens = _SQL_TOKEN.findall(sql)
+    if "(" not in tokens:
+        return tuple(tokens), frozenset(), ()
+    start = tokens.index("(")
+    depth, items, item, end = 0, set(), [], len(tokens)
+    for i in range(start, len(tokens)):
+        t = tokens[i]
+        depth += (t == "(") - (t == ")")
+        if depth == 0:
+            end = i
+            break
+        if depth == 1 and t in ("(", ","):
+            if t == ",":
+                items.add(tuple(item))
+                item = []
+            continue
+        item.append(t)
+    items.add(tuple(item))
+    return tuple(tokens[:start]), frozenset(items), tuple(tokens[end + 1:])
+
+
+def _unquoted(token: str) -> str:
+    """A name as SQL reads it: its quotes taken off, case folded."""
+    if len(token) > 1 and token[0] + token[-1] in ('""', "``", "[]", "''"):
+        token = token[1:-1]
+    return token.casefold()
+
+
+def _redefined(mine: tuple | None, own: tuple | None, added: set[str]) -> bool:
+    """Whether a definition (_definition) says more than Apolaki's own: another head or tail (a quoted name, WITHOUT
+    ROWID, an index's WHERE), or an item its own doesn't have (a default, a CHECK, an expression). The items of the
+    columns in added, listed as hand-added columns already, don't count; an item missing says nothing more."""
+    if mine is None or own is None:
+        return mine != own
+    items = {i for i in mine[1] if not (i and _unquoted(i[0]) in added)}
+    return mine[0] != own[0] or mine[2] != own[2] or not items <= own[1]
+
+
 @functools.lru_cache(maxsize=2)
-def _own_schema(with_vec: bool) -> frozenset:
-    """Apolaki's own schema (_objects), made in memory by memory_store's own statements, and with_vec the vector
-    indexes too: sqlite-vec makes their tables itself, and which it makes depends on its version, so they are read from
-    what the version loaded here makes, never listed by hand."""
+def _own_schema(with_vec: bool) -> tuple[frozenset, dict]:
+    """Apolaki's own schema, made in memory by memory_store's own statements, and with_vec the vector indexes too:
+    sqlite-vec makes their tables itself, and which it makes depends on its version, so they are read from what the
+    version loaded here makes, never listed by hand. (its objects (_objects), and each object's definition
+    (_definition) by (type, name))."""
     from .memory_store import ARCHIVED_INDEX, SCHEMA, VEC_SCHEMA
     con = sqlite3.connect(":memory:")
     try:
@@ -815,24 +875,35 @@ def _own_schema(with_vec: bool) -> frozenset:
                 raise EraseError("sqlite-vec loaded for the database but not for the schema it is compared with")
             for sql in VEC_SCHEMA:
                 con.execute(sql)
-        return frozenset(_objects(con)) | _SQLITE_OWN
+        defs = {(kind, name): _definition(sql) for kind, name, sql in con.execute(
+            "SELECT type, name, sql FROM sqlite_master")}
+        return frozenset(_objects(con)) | _SQLITE_OWN, defs
     finally:
         con.close()
 
 
 def _hand_added(con, with_vec: bool) -> list[dict]:
-    """What the database holds beyond Apolaki's own schema (_own_schema): each table, view and trigger, and each column
-    of one of Apolaki's tables, that its code didn't make, as {"kind", "name", "token"}; the token is what a person
-    passes to --checked. A column of a table added by hand is the table's; an index holds only its own table's values,
-    which go with their rows, so none is listed (a name in an index's name or definition is a schema trace)."""
-    own = _own_schema(with_vec)
-    out = []
-    for kind, name, col in sorted(_objects(con) - own, key=lambda o: (o[0], o[1], o[2] or "")):
+    """What the database holds beyond Apolaki's own schema (_own_schema), as {"kind", "name", "token"}; the token is
+    what a person passes to --checked:
+      - each table, view and trigger, and each column of one of Apolaki's tables (a generated one too), that its code
+        didn't make. A column of a table added by hand is the table's;
+      - each of Apolaki's own tables and indexes whose definition says more than its code's (_redefined, round A2): a
+        hand-rebuilt memories table whose DEFAULT or CHECK holds base64 has Apolaki's name and columns, and only its
+        definition shows it.
+    An index Apolaki didn't make isn't listed: it holds its own table's values, which go with their rows (a name in an
+    index's name or definition is a schema trace)."""
+    own, defs = _own_schema(with_vec)
+    out, added = [], {}
+    for kind, name, col in _objects(con) - own:
         if kind == "column" and ("table", name, None) in own:
             out.append({"kind": "column", "name": f"{name}.{col}", "token": f"column:{name}.{col}"})
+            added.setdefault(name, set()).add(col.casefold())
         elif kind in ("table", "view", "trigger"):
             out.append({"kind": kind, "name": name, "token": f"{kind}:{name}"})
-    return out
+    for kind, name, sql in con.execute("SELECT type, name, sql FROM sqlite_master").fetchall():
+        if (kind, name) in defs and _redefined(_definition(sql), defs[kind, name], added.get(name, set())):
+            out.append({"kind": "definition", "name": name, "token": f"definition:{name}"})
+    return sorted(out, key=lambda h: (h["kind"], h["name"]))
 
 
 def _open(db: Path, readonly: bool):
@@ -1183,9 +1254,9 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
     erase refuses before changing anything. A near-match that is the person is given as an alias instead, which erases
     it. The ledger records each ruled near-match by where it is, never by the word, which contains the name.
 
-    checked is a person's word that they have checked, by hand, each table, column, view and trigger the plan lists as
-    not Apolaki's (Plan.checks()) for the name in any form: the erase certifies only Apolaki's own schema (round A). It
-    must name each of them and nothing else, or the erase refuses before changing anything."""
+    checked is a person's word that they have checked, by hand, each table, column, view, trigger and definition the
+    plan lists as not Apolaki's (Plan.checks()) for the name in any form: the erase certifies only Apolaki's own schema
+    (round A). It must name each of them and nothing else, or the erase refuses before changing anything."""
     home = home or config.home()
     if not by.strip():
         raise EraseError("say who is erasing (by)")
@@ -1385,11 +1456,13 @@ def describe(p: Plan) -> str:
                      f"WILL REFUSE until a person renames or drops these:")
         lines += [f"  {s['type']} {s['name']!r}: its {s['where']}" for s in p.schema]
     if p.hand_added:
-        lines.append(f"\nNot Apolaki's ({len(p.hand_added)}): tables, columns, views and triggers its code didn't "
-                     f"make. This erase reads them, but certifies only Apolaki's own tables, since text can be stored "
-                     f"in them in ways it doesn't read (base64, say). The erase WILL REFUSE until a person has checked "
-                     f"each by hand (a table or column for the name in any form; a view or trigger for what it reads, "
-                     f"and a trigger for what it copies when the erase deletes rows), and names each with --checked:")
+        lines.append(f"\nNot Apolaki's ({len(p.hand_added)}): tables, columns (generated ones too), views and triggers "
+                     f"its code didn't make, and its own tables and indexes whose definition says more than its code's "
+                     f"(a default, a constraint, an expression). This erase reads them, but certifies only Apolaki's "
+                     f"own tables, since text can be stored in them in ways it doesn't read (base64, say). The erase "
+                     f"WILL REFUSE until a person has checked each by hand (a table, column or definition for the name "
+                     f"in any form; a view or trigger for what it reads, and a trigger for what it copies when the "
+                     f"erase deletes rows), and names each with --checked:")
         lines += [f"  {h['kind']} {h['name']!r}: --checked {h['token']!r}" for h in p.hand_added]
     if p.near:
         lines.append(f"\nNear-matches ({len(p.near)}): the name inside a longer word, in what this erase keeps. The "
