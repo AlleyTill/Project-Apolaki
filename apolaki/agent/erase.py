@@ -16,8 +16,9 @@ What counts as the name, for the name and each alias:
     so "María López" also finds "MARIA LOPEZ"; and since round A small capitals and the Cherokee letters that look
     Latin are read as the Latin letter (_SKELETON), so "Marisol" also finds the small-capital and "\u13b7arisol" forms;
   - the parts of a name are the pieces between spaces, hyphens and dashes, apostrophes, full stops, underscores,
-    markup characters (* [ ] ( ) { } < > / \\ | # ~ ^ = +), commas, semicolons, colons and middle dots, and in the text
-    any run of those, or nothing, may stand between two parts: "Jean-Luc Moreau" finds "Jean Luc Moreau", "Jean–Luc
+    markup characters (* [ ] ( ) { } < > / \\ | # ~ ^ = +), commas, semicolons, colons, middle dots, and since round
+    A2 the bullet, the dot and bullet operators, the ideographic and Arabic commas and "&" (_SEP), and in the text any
+    run of those, or nothing, may stand between two parts: "Jean-Luc Moreau" finds "Jean Luc Moreau", "Jean–Luc
     Moreau" (an en dash), "JeanLuc Moreau", "jean_luc_moreau" (a wiki file name) and "jean.luc.moreau"; "O'Brien" finds
     "OBrien" and "O Brien"; "Marisol Quintero" finds "**Marisol** Quintero", "Marisol/Quintero", "Marisol,Quintero" (a
     CSV row) and "Marisol\u00b7Quintero";
@@ -30,8 +31,9 @@ What counts as the name, for the name and each alias:
   - text is read as stored, with its escapes decoded (\\u00f3, \\U..., \\x.., \\n and the like, any number of
     backslashes deep, since store() writes tags with json.dumps, which escapes every non-ASCII letter), and with its
     markup taken out: a Markdown link or image ("[Marisol](url) Quintero"), an HTML tag, an HTML entity
-    ("Mar&iacute;a") and percent-encoding; and read as quoted-printable, soft line breaks included ("L=C3=B3pez",
-    "Mari=" at a line's end then "sol"), since round A.
+    ("Mar&iacute;a") and percent-encoding, the last two decoded until nothing changes since round A2 ("&amp;iacute;",
+    "%25C3%25AD"); and read as quoted-printable, soft line breaks included ("L=C3=B3pez", "Mari=" at a line's end then
+    "sol"), since round A.
 A near-match is the name inside a longer word: what the pattern finds without the word edges that it doesn't find
 with them ("Marisol Quinterova", "xMarisol Quintero"). It may be another person, or her. The dry run lists every
 near-match in what the erase keeps (any column of any kept row, the schema, kept wiki pages, kept beliefs, what the
@@ -61,8 +63,10 @@ names and definitions, column defaults included). A name in a table or column th
 added by hand, say), or in the schema, is listed, and the erase refuses before changing anything until a person has
 dealt with it. So is a TEXT cell whose bytes aren't valid UTF-8 (written with CAST(... AS TEXT), or by a program
 writing another encoding), whether or not it seems to name the person, since what it says can't be read with
-certainty: the dry run lists it, and the erase refuses (EraseUnreadable, exit code 4) until a person rewrites or
-removes it. Before round A such a cell stopped the dry run with a Python error.
+certainty: the dry run lists it (and exits 4 since round A2), and the erase refuses (EraseUnreadable, exit code 4)
+until a person rewrites or removes it. Before round A such a cell stopped the dry run with a Python error. The same
+holds for the engine's belief files: since round A2 one that isn't valid UTF-8 stops the dry run and the erase with
+that refusal (exit code 4), where the belief log stopped them with a Python error before.
 
 It certifies only Apolaki's own schema (round A): the tables and columns memory_store makes, the vector indexes'
 tables (as the sqlite-vec loaded here makes them) and SQLite's own counters. Every other table, every column added to
@@ -105,7 +109,9 @@ What it can't do:
     logs and backups can hold the name too, and the erase leaves them alone. Since round A the dry run lists each place
     in an approval-queue item (with its status), a grant draft or a grant hunt file that names the person, read as
     memory is read, with the text around it; and every other file under $APOLAKI_HOME the name (or a near-match) is
-    in, by name. A person deals with each by hand. Copies outside $APOLAKI_HOME are beyond it.
+    in, by name. Since round A2 a file whose name, or a folder it is in, names the person is listed too
+    ("grant-drafts/marisol_quintero_memorial_draft.md"). A person deals with each by hand. Copies outside $APOLAKI_HOME
+    are beyond it.
   - run beside a live Apolaki. VACUUM needs the database to itself: stop the scheduled jobs and the MCP server
     first (docs/STOPPING.md).
   - settle a licence question. Apolaki's licence carries the SAFE-AI module, whose memory-sovereignty clause says
@@ -210,15 +216,29 @@ def _unescape(text: str) -> str:
 _MD_LINK = re.compile(r"!?\[([^\]\n]{0,300})\](?:\([^)\n]{0,1000}\)|\[[^\]\n]{0,100}\])")
 _TAG = re.compile(r"<[^<>\n]{0,1000}>")
 _MARKUP = re.compile(r"\]\(|\]\[|<[^<>\n]{0,1000}>|&#?\w{1,32};|%[0-9a-fA-F]{2}")
+# Entities and percent-encoding are decoded again and again until nothing changes (round A2, as apolaki.intake has
+# done since round A): "&amp;oacute;" is "&oacute;", then an accented o; "%25C3%25B3" is "%C3%B3", then the same.
+# Each pass that changes the text shortens it; the cap bounds the work on a text nested deeper than any reader decodes,
+# which is read as decoded that many times (docs/KNOWN_LIMITS.md section 5).
+DECODE_PASSES = 16
+
+
+def _decoded(text: str) -> str:
+    for _ in range(DECODE_PASSES):
+        t = urllib.parse.unquote(html.unescape(text))
+        if t == text:
+            break
+        text = t
+    return text
 
 
 def _demarked(text: str) -> tuple[str, ...]:
     """The text with its markup taken out, a tag taken as nothing ("Mari<b>sol</b>") and as a space ("Marisol<br>
-    Quintero"); () when it has none."""
+    Quintero"), entities and percent-encoding decoded until nothing changes (_decoded); () when it has none."""
     if not _MARKUP.search(text):
         return ()
     t = _MD_LINK.sub(lambda m: m.group(1), text)
-    t = urllib.parse.unquote(html.unescape(t)) if ("&" in t or "%" in t) else t
+    t = _decoded(t) if ("&" in t or "%" in t) else t
     return (_TAG.sub("", t), _TAG.sub(" ", t))
 
 
@@ -257,7 +277,8 @@ def _variants(text: str) -> tuple[str, ...]:
 
 # Look-alike letters normalize() doesn't fold (round A): the small capitals, read as their letter
 # ("\u1d0d\u1d00\u0280\u026as\u1d0f\u029f" reads "MARISOL"), and the Cherokee letters that Unicode's confusables list
-# maps to a Latin letter ("\u13b7arisol"). The Cherokee pairs are from confusables.txt (UTS #39, version 18.0.0,
+# maps to a Latin letter ("\u13b7arisol"), and one it maps to Greek capital gamma (\u13b1, read as gamma as the fold
+# leaves it; round A had it as r). The Cherokee pairs are from confusables.txt (UTS #39, version 18.0.0,
 # 2026-08-06; (c) Unicode, Inc., under the Unicode License, https://www.unicode.org/license.txt). The small capitals are
 # taken by their names, not from that list, which maps small capital M to a turned w. Each key is as the fold leaves
 # it: after case folding, a Cherokee small letter is its capital. Latin letters of living orthographies that the list
@@ -269,7 +290,7 @@ _SKELETON = str.maketrans(
     "\u13a0\u13a1\u13a2\u13a5\u13a9\u13aa\u13ab\u13ac\u13b1\u13b3\u13b7\u13bb\u13bd\u13c0\u13c2\u13c3\u13cf"
     "\u13d2\u13d4\u13d5\u13d9\u13da\u13de\u13df\u13e2\u13e6\u13e7\u13f3\u13f4",           # Cherokee
     "ginrybhacdejkmoptuvwzfsq"
-    "drtiyajerwmhyghzbrwsvslcpkdgb")
+    "drtiyaje\u03b3wmhyghzbrwsvslcpkdgb")
 
 
 def _fold(text: str) -> str:
@@ -368,9 +389,12 @@ def _byte_texts(raw: bytes) -> list[str]:
 
 # Between two parts of a name: any run of spaces, hyphens and dashes, apostrophes, full stops, underscores, markup
 # characters (* [ ] ( ) { } < > / \ | # ~ ^ = +), and since round A commas, semicolons, colons and middle dots (a CSV
-# row, "Marisol;Quintero", "Marisol\u00b7Quintero", a Japanese name in katakana with its dot), or none.
-# \u2010-\u2015 are the Unicode hyphens and dashes; \u2212 is the minus sign; \u00b7, \u2027 and \u30fb are middle dots.
-_SEP = r"[\s\-\u2010-\u2015\u2212'._*\[\](){}<>/\\|#~^=+,;:\u00b7\u2027\u30fb]"
+# row, "Marisol;Quintero", "Marisol\u00b7Quintero", a Japanese name in katakana with its dot), and since round A2 the
+# other dots and commas round A's verifier wrote between the parts, and "&", or none.
+# \u2010-\u2015 are the Unicode hyphens and dashes; \u2212 is the minus sign; \u00b7, \u2027, \u30fb and \u2e31 are
+# middle dots; \u22c5 and \u2219 are the dot and bullet operators, \u2022 the bullet; \u3001 is the ideographic comma
+# (its halfwidth and small forms fold to it) and \u060c the Arabic comma.
+_SEP = r"[\s\-\u2010-\u2015\u2212'._*\[\](){}<>/\\|#~^=+,;:&\u00b7\u2027\u30fb\u2e31\u22c5\u2219\u2022\u3001\u060c]"
 _SPLIT = re.compile(_SEP + "+")
 # Scripts written without spaces between words (Chinese, Japanese, Thai, Lao, Khmer, Myanmar, Tibetan, Yi), and
 # Korean, whose particles and honorifics attach to a name: a name written in one has no word edge to keep, and a
@@ -737,6 +761,7 @@ class Plan:
     belief_log_lines: int = 0
     elsewhere: list[tuple[str, int]] = field(default_factory=list)
     elsewhere_near: list[tuple[str, int]] = field(default_factory=list)   # files with near-matches only
+    named_paths: list[str] = field(default_factory=list)    # files whose path (name or folder) names the person
     records: list[dict] = field(default_factory=list)       # {"kind", "file", "where", "text"}: listed, never changed
     db_other: list[dict] = field(default_factory=list)      # {"table", "column", "rows"}: named where it can't remove
     unreadable: list[dict] = field(default_factory=list)    # {"table", "column", "rows"}: TEXT that isn't valid UTF-8
@@ -923,13 +948,26 @@ def _wiki_name(title: str) -> str:
 
 
 def _read_rows(path: Path) -> list | None:
+    """The engine's beliefs file as a list; [] when it isn't there; None when it can't be read as one. Bytes that
+    aren't valid UTF-8 raise UnicodeDecodeError, for the caller to refuse on as text it can't read
+    (_unreadable_file)."""
     try:
         rows = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return []
+    except UnicodeDecodeError:
+        raise
     except (OSError, ValueError):
         return None
     return rows if isinstance(rows, list) else None
+
+
+def _unreadable_file(path: Path, e: UnicodeDecodeError) -> EraseUnreadable:
+    """The refusal for one of the engine's belief files that isn't valid UTF-8 (round A2: the belief log stopped the
+    dry run with a Python traceback and exit 1 before), with the code of item 2's refusal on such a text cell."""
+    return EraseUnreadable(f"{path} isn't valid UTF-8 (byte {e.start} of it), so whether it names the person can't be "
+                           f"read with certainty, and the erase couldn't rewrite it. Nothing was removed. A person "
+                           f"rewrites it as UTF-8, or removes what isn't, then runs the dry run again")
 
 
 def _snippet(text: str, word: str) -> str:
@@ -1100,7 +1138,10 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
                 nears += [({"file": "wiki/" + rel}, w, t) for t in (rel.replace("_", " "), text)
                           for w in _near_words(hit, loose, t)]
 
-    rows = _read_rows(p["beliefs"])
+    try:
+        rows = _read_rows(p["beliefs"])
+    except UnicodeDecodeError as e:
+        raise _unreadable_file(p["beliefs"], e) from None
     if rows is None:
         raise EraseError(f"{p['beliefs']} can't be read, so beliefs naming the person couldn't be found. Nothing "
                          f"was removed")
@@ -1115,6 +1156,8 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
         log = p["belief_log"].read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
         log = []
+    except UnicodeDecodeError as e:
+        raise _unreadable_file(p["belief_log"], e) from None
     for i, line in enumerate(log, 1):
         if named(line):
             out.belief_log_lines += 1
@@ -1126,16 +1169,21 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
     for f in sorted(home.rglob("*")) if home.is_dir() else []:
         if not f.is_file() or f in handled or p["wiki"] in f.parents:
             continue
+        rel = str(f.relative_to(home))
+        by_name = named(rel)          # its name, or a folder it is in, names the person (round A2)
+        if by_name:
+            out.named_paths.append(rel)
         try:
             raw = f.read_bytes()
         except OSError:
-            out.elsewhere.append((str(f.relative_to(home)), -1))
+            out.elsewhere.append((rel, -1))
             continue
         texts = _byte_texts(raw)
-        n = max(len(hit.findall(t)) for t in texts)
+        n = max(len(hit.findall(t)) for t in texts) + by_name
         top = f.relative_to(home).parts
         if len(top) > 1 and top[0] in _RECORDS:
-            found = _record_hits(f, raw, hit)
+            found = [("the file's name", rel)] if by_name else []
+            found += _record_hits(f, raw, hit)
             status = ""
             if top[0] == "approval-queue":
                 try:
@@ -1148,9 +1196,10 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
                              "text": _hit_snippet(v, hit)} for w, v in found]
             n = max(n, len(found))
         if n:
-            out.elsewhere.append((str(f.relative_to(home)), n))
-        elif any(_near_in(hit, loose, t) for t in texts):
-            out.elsewhere_near.append((str(f.relative_to(home)), max(len(_near_in(hit, loose, t)) for t in texts)))
+            out.elsewhere.append((rel, n))
+        elif any(_near_in(hit, loose, t) for t in texts) or _near_words(hit, loose, rel):
+            out.elsewhere_near.append((rel, max(len(_near_in(hit, loose, t)) for t in texts)
+                                       + len(_near_words(hit, loose, rel))))
 
     ident = {"names": [_fold(n) for n in names], "memories": [m["id"] for m in out.memories],
              "entities": [e["id"] for e in out.entities], "mentions": out.mentions, "triples": out.triples,
@@ -1480,7 +1529,8 @@ def describe(p: Plan) -> str:
     other = [(path, n) for path, n in p.elsewhere if path not in {r["file"] for r in p.records}]
     if other:
         lines.append(f"\nNot memory, so NOT erased by this command; the name is also in ({len(other)}):")
-        lines += [f"  {path} ({'unreadable' if n < 0 else f'{n} time(s)'})" for path, n in other]
+        lines += [f"  {path} ({'unreadable' if n < 0 else f'{n} time(s)'}"
+                  f"{', its name or folder included' if path in p.named_paths else ''})" for path, n in other]
         lines.append("  A person deals with these by hand (see docs/DATA_LIFECYCLE.md).")
     if p.elsewhere_near:
         lines.append(f"\nNot memory, and NOT touched; the name inside a longer word is in ({len(p.elsewhere_near)}):")

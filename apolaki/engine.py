@@ -23,7 +23,8 @@
     python -m apolaki.engine erase-person NAME [--alias A] [--confirm CODE --by WHO --reason WHY [--not-them WORD]
                                              [--checked THING]]
                                              # apolaki.agent.erase; exits 0 done (or a dry run), 1 incomplete,
-                                             # 2 refused, 4 refused on text that isn't valid UTF-8
+                                             # 2 refused, 4 refused on text that isn't valid UTF-8 (a dry run
+                                             # that lists such text exits 4 too)
 """
 from __future__ import annotations
 
@@ -261,9 +262,10 @@ def main(argv=None) -> int:
     if a.cmd == "erase-person":
         from .agent import erase as X
         try:
-            if not a.confirm:
-                print(X.describe(X.plan(a.name, tuple(a.alias))))
-                return 0
+            if not a.confirm:              # a dry run that lists text it can't read exits as that refusal would (4)
+                p = X.plan(a.name, tuple(a.alias))
+                print(X.describe(p))
+                return 4 if p.unreadable else 0
             done = X.erase(a.name, tuple(a.alias), confirm=a.confirm, by=a.by, reason=a.reason,
                            not_them=tuple(a.not_them), checked=tuple(a.checked))
         except X.EraseError as e:       # exit 1: ran but incomplete; 4: text that isn't UTF-8; 2: any other refusal

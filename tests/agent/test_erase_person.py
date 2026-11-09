@@ -1509,7 +1509,10 @@ def test_a_text_cell_that_isnt_utf8_is_listed_and_the_erase_refuses_with_its_own
     assert kind == "text", "the setup lost its point"
     with pytest.raises(sqlite3.OperationalError):          # what sqlite3 does with it on its own
         db_rows(home, "SELECT source FROM memories")
-    p = X.plan(PERSON)
+    try:                                                    # the dry run reads it with its own text factory
+        p = X.plan(PERSON)
+    except sqlite3.Error as e:
+        pytest.fail(f"the dry run stopped with a Python error on text that isn't UTF-8: {e!r}")
     assert p.unreadable == [{"table": "memories", "column": "source", "rows": 1}]
     assert p.counts()["unreadable_cells"] == 1 and not p.empty()
     assert "WILL REFUSE (exit code 4)" in X.describe(p) and "table memories, column source: 1 cell(s)" in X.describe(p)
@@ -1518,7 +1521,7 @@ def test_a_text_cell_that_isnt_utf8_is_listed_and_the_erase_refuses_with_its_own
         X.erase(PERSON, confirm=p.code, by="x", reason="asked")
     assert type(refused.value) is X.EraseUnreadable and "Nothing was removed" in str(refused.value)
     assert rows_as_bytes(home) == before and not (home / "erasures.jsonl").exists()
-    assert E.main(["erase-person", PERSON]) == 0
+    assert E.main(["erase-person", PERSON]) == 4         # the dry run lists it and exits as the refusal will (round A2)
     assert "isn't valid UTF-8" in capsys.readouterr().out
     assert E.main(["erase-person", PERSON, "--confirm", p.code, "--by", "x", "--reason", "asked"]) == 4
     assert "not erased: the database holds text that isn't valid UTF-8" in capsys.readouterr().err
@@ -1827,7 +1830,7 @@ def b64(text):
 
 
 def own_schema_with(home, schema):
-    """A database made from a changed copy of memory_store's SCHEMA (a table rebuilt by hand), then used by the store."""
+    """A database made from a changed copy of memory_store's SCHEMA (a table rebuilt by hand), for the store to use."""
     assert schema != ms.SCHEMA, "the setup lost its point"
     (home / "db").mkdir(parents=True)
     con = sqlite3.connect(str(home / "db" / "apolaki.db"))
@@ -1842,7 +1845,8 @@ def test_a_generated_column_added_by_hand_is_listed_and_stops_a_verified_result(
     from apolaki.agent import erase as X
     column = f"extra TEXT GENERATED ALWAYS AS ('{b64(PERSON)}') {kind}"
     if kind == "STORED":
-        own_schema_with(home, ms.SCHEMA.replace("    archive_reason TEXT\n", f"    archive_reason TEXT,\n    {column}\n"))
+        own_schema_with(home, ms.SCHEMA.replace("    archive_reason TEXT\n",
+                                                f"    archive_reason TEXT,\n    {column}\n"))
     plant(home)
     if kind == "VIRTUAL":
         hand_add(home, f"ALTER TABLE memories ADD COLUMN {column}")
@@ -1932,3 +1936,136 @@ def test_a_virtual_table_whose_module_isnt_loaded_is_listed_by_its_name(home):
     except sqlite3.Error as e:
         pytest.fail(f"a virtual table whose module isn't loaded broke the dry run: {e!r}")
     assert p.checks() == ["table:ghost"], X.describe(p)
+
+
+# Item 3: lower findings of round A's verifier.
+@pytest.mark.parametrize("sep", [0x2E31, 0x22C5, 0x2219, 0x2022, 0x3001, 0x060C, ord("&"), 0xFF64],
+                         ids=["word separator middle dot", "dot operator", "bullet operator", "bullet",
+                              "ideographic comma", "arabic comma", "ampersand", "halfwidth ideographic comma"])
+def test_more_dots_and_commas_between_the_parts_are_read(home, sep):
+    """Each was missed entirely before, not even listed as a near-match."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    mid = s.store(f"Note: Marisol{chr(sep)}Quintero called about the appeal.")
+    kept = s.store("Brand voice: plain and warm.")
+    s.close()
+    p = X.plan(PERSON)
+    assert [m["id"] for m in p.memories] == [mid], X.describe(p)
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+
+
+def test_cherokee_hu_is_read_as_the_gamma_it_looks_like_not_as_r():
+    """confusables.txt maps U+13B1 to Greek capital gamma; round A read it as r, so "\\u13b1osa" was Rosa."""
+    from apolaki.agent import erase as X
+    hu = chr(0x13B1)
+    assert X._fold(hu) == X._fold(chr(0x0393)) == chr(0x03B3) == X._fold_bytes(hu.encode())
+    assert not X._matcher(["Rosa Delgado"]).search(X._fold(hu + "osa Delgado"))
+
+
+# confusables.txt (UTS #39, 18.0.0, 2026-08-06), the prototype of each Cherokee letter the erase reads as a look-alike:
+# the test's own copy, so a wrong entry in erase._SKELETON fails here (round A's mutant D10, q read as x, lived).
+CHEROKEE_CONFUSABLES = {
+    0x13A0: 0x0044, 0x13A1: 0x0052, 0x13A2: 0x0054, 0x13A5: 0x0069, 0x13A9: 0x0059, 0x13AA: 0x0041, 0x13AB: 0x004A,
+    0x13AC: 0x0045, 0x13B1: 0x0393, 0x13B3: 0x0057, 0x13B7: 0x004D, 0x13BB: 0x0048, 0x13BD: 0x0059, 0x13C0: 0x0047,
+    0x13C2: 0x0068, 0x13C3: 0x005A, 0x13CF: 0x0062, 0x13D2: 0x0052, 0x13D4: 0x0057, 0x13D5: 0x0053, 0x13D9: 0x0056,
+    0x13DA: 0x0053, 0x13DE: 0x004C, 0x13DF: 0x0043, 0x13E2: 0x0050, 0x13E6: 0x004B, 0x13E7: 0x0064, 0x13F3: 0x0047,
+    0x13F4: 0x0042,
+}
+
+
+def test_each_look_alike_entry_is_read_as_its_source_says():
+    """D10: a small capital as the letter its Unicode name gives, a Cherokee letter as its prototype, case folded."""
+    import unicodedata
+    from apolaki.agent import erase as X
+    prefix = "LATIN LETTER SMALL CAPITAL "
+    small = {k: chr(v) for k, v in X._SKELETON.items() if unicodedata.name(chr(k)).startswith(prefix)}
+    assert len(small) == 24
+    for k, v in small.items():
+        assert v == unicodedata.name(chr(k))[len(prefix):].lower(), hex(k)
+    cherokee = {k: chr(v) for k, v in X._SKELETON.items() if k not in small}
+    assert cherokee == {k: chr(v).casefold() for k, v in CHEROKEE_CONFUSABLES.items()}
+
+
+@pytest.mark.parametrize("text", ["Thanks to Mari<b>=\nsol</b> Quintero for hosting.",
+                                  "Thanks to Mari=3Cb=3Esol Quintero for hosting."], ids=["tags", "tags as =XX"])
+def test_quoted_printable_with_markup_in_it_is_read_with_the_markup_out(home, text):
+    """D9: the quoted-printable reading is de-marked too (a tag inside the soft line break, or written as =3C...)."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    mid = s.store(text)
+    s.store("Brand voice: plain and warm.")
+    s.close()
+    assert [m["id"] for m in X.plan(PERSON).memories] == [mid]
+
+
+@pytest.mark.parametrize("text", ["Thanks to Mar&amp;iacute;a L&amp;oacute;pez.",
+                                  "Thanks to Mar%25C3%25ADa L%25C3%25B3pez.",
+                                  "Thanks to Mar&amp;#237;a L&amp;#xf3;pez.",
+                                  "Thanks to Mar%26iacute;a L%2526oacute%253Bpez."],
+                         ids=["entities twice", "percent twice", "numeric entities twice", "percent writes entity"])
+def test_entities_and_percent_encoding_applied_twice_are_read(home, text):
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    mid = s.store(text)
+    kept = s.store("Brand voice: plain and warm.")
+    s.close()
+    p = X.plan(MARIA)
+    assert [m["id"] for m in p.memories] == [mid], X.describe(p)
+    X.erase(MARIA, confirm=p.code, by="x", reason="asked")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+
+
+def test_a_file_whose_name_names_the_person_is_listed(home):
+    """A record file's name is a place in it; any other file's name counts as a time the name is in it; a near-match in
+    a name is listed as one. None of them is changed."""
+    from apolaki.agent import erase as X
+    plant(home)
+    (home / "grant-drafts").mkdir()
+    draft = home / "grant-drafts" / "marisol_quintero_memorial_draft.md"
+    draft.write_text("# Letter\n\nWe thank our partners.\n")
+    queued = home / "approval-queue" / "Marisol-Quintero" / "20261103_000000_social.json"
+    queued.parent.mkdir()
+    queued.write_text(json.dumps({"id": "20261103_000000", "content": "Thanks to our host.", "status": "pending"}))
+    (home / "exports").mkdir()
+    (home / "exports" / "Marisol Quintero.csv").write_text("id,amount\n1,20\n")
+    (home / "exports" / "marisol_quinterova.csv").write_text("id,amount\n2,30\n")
+    before = {f: f.read_bytes() for f in (home / "grant-drafts").rglob("*") if f.is_file()}
+    p = X.plan(PERSON)
+    assert {(r["file"], r["where"]) for r in p.records if "name" in r["where"]} == {
+        ("grant-drafts/marisol_quintero_memorial_draft.md", "the file's name"),
+        ("approval-queue/Marisol-Quintero/20261103_000000_social.json", "the file's name")}
+    assert ("exports/Marisol Quintero.csv", 1) in p.elsewhere
+    assert ("exports/marisol_quinterova.csv", 1) in p.elsewhere_near
+    text = X.describe(p)
+    assert "grant-drafts/marisol_quintero_memorial_draft.md (grant draft), the file's name" in text
+    assert "exports/Marisol Quintero.csv (1 time(s), its name or folder included)" in text
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert {f: f.read_bytes() for f in (home / "grant-drafts").rglob("*") if f.is_file()} == before
+
+
+@pytest.mark.parametrize("file,line", [("engine_beliefs_log.jsonl", b'{"kind": "added", "content": "Caf\xe9"}\n'),
+                                       ("engine_beliefs.json", None)], ids=["belief log", "beliefs"])
+def test_a_belief_file_that_isnt_utf8_is_refused_with_exit_4_not_a_traceback(home, capsys, file, line):
+    """The belief log was read strictly: a byte that isn't UTF-8 stopped the dry run with a Python traceback and exit
+    1, the code of an incomplete erase. It is now item 2's refusal, exit 4, in the dry run and the erase alike."""
+    import apolaki.engine as E
+    from apolaki.agent import erase as X
+    plant(home)
+    path = home / file
+    if line is None:
+        path.write_bytes(path.read_bytes().replace(b"exactly", b"exactly \xe9"))
+    else:
+        with path.open("ab") as f:
+            f.write(line)
+    before = snapshot(home)
+    for args in (["erase-person", PERSON], ["erase-person", PERSON, "--confirm", "x", "--by", "x", "--reason", "y"]):
+        try:
+            rc = E.main(args)
+        except UnicodeDecodeError as e:
+            pytest.fail(f"a traceback: {e!r}")
+        assert rc == 4 and f"{file} isn't valid UTF-8" in capsys.readouterr().err
+    with pytest.raises(X.EraseError) as refused:
+        X.plan(PERSON)
+    assert type(refused.value) is X.EraseUnreadable
+    assert snapshot(home) == before and not (home / "erasures.jsonl").exists()
