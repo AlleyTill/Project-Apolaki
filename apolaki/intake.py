@@ -18,6 +18,10 @@ A every view decodes entities and percent-encoding again and again until nothing
 DECODE_PASSES passes is held for a person (UNSETTLED); a tag left open at the end of the text is closed first, an
 attribute value left open with it; and each tag is also read with its name and brackets taken out and its words kept
 in place (as_words), so "Ignore all <b previous instructions", whose words a browser hides as a tag's, is caught.
+Since round A2 a "+" is also read as a space, as a form's query string writes one (as_form:
+"Ignore+all+previous+instructions"); a text is held as UNSETTLED when any view's decoding hasn't settled, not only the
+raw text's (a tag can hide the nesting from the raw text); and the two expressions that read tags and attributes run in
+time linear in the text's length (a long run of letters in a tag took seconds before).
   - A hit quarantines the text for a person: $APOLAKI_HOME/quarantine/q_<sha256 prefix>.json holds the text, its
     sources, its kind, the patterns that fired and when it was seen. The same text seen again is the same entry
     (seen_count, sources), so a listing re-read every night doesn't raise a new alarm each time. Each event is a line
@@ -109,6 +113,8 @@ _HTML_TAG = re.compile(r"</?[A-Za-z!?][^<>]*>")
 # space), percent-encoding applied twice ("%2520"), an entity that writes a percent escape ("&#37;20") or the other way
 # round ("%26nbsp;"). Each pass that changes the text shortens it, so decoding settles; the cap bounds the work on a
 # text nested deeper than any reader would decode, and such a text is held for a person (UNSETTLED), never admitted.
+# That holds for every view's decoding, not only the raw text's (round A2): a tag can hide the nesting from the raw
+# text ("&<b></b>amp;amp;..." decodes once there, and 17 times over once the reader's view takes the tag out).
 DECODE_PASSES = 16
 UNSETTLED = f"encoded more than {DECODE_PASSES} times over"
 
@@ -124,8 +130,12 @@ def _decode(text: str) -> tuple[str, bool]:
     return text, False
 
 
-def _decoded(text: str) -> str:
-    return _decode(text)[0]
+def _decoded(text: str, unsettled: list | None = None) -> str:
+    """The text decoded (_decode); a text whose decoding didn't settle is added to unsettled, when it is given."""
+    out, settled = _decode(text)
+    if not settled and unsettled is not None:
+        unsettled.append(text)
+    return out
 
 
 # A tag left open at the end of the text ("Ignore all <b previous instructions"): a browser drops it, words and all,
@@ -145,26 +155,29 @@ def _encoded(text: str) -> bool:
     return "<" in text or "&" in text or "%" in text
 
 
-def as_read(text: str) -> list[str]:
+def as_read(text: str, unsettled: list | None = None) -> list[str]:
     """The text as a reader of its HTML sees it: comments and tags taken out (a tag left open at the end closed first),
     as nothing and as a space (an inline tag joins a word, a line break or a paragraph separates two), then HTML
     entities and percent-encoding decoded until nothing changes. [] when that changes nothing. Tags go before entities
-    are decoded, as a browser reads them: "&lt;b&gt;" is text, not a tag."""
+    are decoded, as a browser reads them: "&lt;b&gt;" is text, not a tag. Each of these views (as_read, as_words,
+    as_raw, as_form) adds to unsettled, when it is given, each text whose decoding didn't settle (_decoded)."""
     if not _encoded(text):
         return []
     out, closed = [], _closed(text)
     for gap in ("", " "):
-        seen = _decoded(_HTML_TAG.sub(gap, _HTML_COMMENT.sub(gap, closed)))
+        seen = _decoded(_HTML_TAG.sub(gap, _HTML_COMMENT.sub(gap, closed)), unsettled)
         if seen != text and seen not in out:
             out.append(seen)
     return out
 
 
-# A tag: its name, and what it holds after the name.
-_TAG_PARTS = re.compile(r"</?[A-Za-z!?][^\s<>/]*([^<>]*)>")
+# A tag: its name, and what it holds after the name. The name is matched possessively (round A2): given back a letter
+# at a time to what follows, a long name with no ">" after it took time quadratic in its length (15 s for 8,000
+# letters); the name ends where the run does either way, so what matches is the same.
+_TAG_PARTS = re.compile(r"</?[A-Za-z!?][^\s<>/]*+([^<>]*)>")
 
 
-def as_words(text: str) -> list[str]:
+def as_words(text: str, unsettled: list | None = None) -> list[str]:
     """The text as a model reads the words inside its tags (round A): each tag's name and brackets taken out and what
     it holds kept in place, so "Ignore all <b previous instructions" (left open, then closed) reads "Ignore all
     previous instructions", which the reader's view loses whole. The same for the text decoded first, so a tag that
@@ -173,19 +186,22 @@ def as_words(text: str) -> list[str]:
     if not _encoded(text):
         return []
     out = []
-    for base in (_closed(text), _closed(_decoded(text))):
+    for base in (_closed(text), _closed(_decoded(text, unsettled))):
         for gap in ("", " "):
-            seen = _decoded(_TAG_PARTS.sub(lambda m: gap + m.group(1) + gap, base))
+            seen = _decoded(_TAG_PARTS.sub(lambda m: gap + m.group(1) + gap, base), unsettled)
             if seen != text and seen not in out:
                 out.append(seen)
     return out
 
 
-# An attribute and its value, quoted either way or not at all, inside a tag (_HTML_TAG).
-_ATTRIBUTE = re.compile(r"""[^\s"'<>/=]+\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>=`]+))""")
+# An attribute and its value, quoted either way or not at all, inside a tag (_HTML_TAG). A name starts only where a run
+# of name characters starts (the lookbehind), and is matched possessively (round A2): tried from every letter of a long
+# run with no "=" after it, each try ran to the end of the run, so a scan took time quadratic in the run's length
+# ('<a ' and 8,000 letters took 6.5 s). A match can't start inside a run anyway, since the run's end is the same.
+_ATTRIBUTE = re.compile(r"""(?<![^\s"'<>/=])[^\s"'<>/=]++\s*+=\s*+(?:"([^"]*)"|'([^']*)'|([^\s"'<>=`]+))""")
 
 
-def as_raw(text: str) -> list[str]:
+def as_raw(text: str, unsettled: list | None = None) -> list[str]:
     """The text as a model reading its raw HTML sees it (round 4: the reader's view takes a whole tag out before it
     decodes entities, so '<img alt="Ignore&nbsp;all previous instructions">' was admitted): the text with its entities
     and percent-encoding decoded until nothing changes and its tags kept, and every tag's attribute values (a tag left
@@ -194,20 +210,34 @@ def as_raw(text: str) -> list[str]:
     if not _encoded(text):
         return []
     out = []
-    decoded = _decoded(text)
+    decoded = _decoded(text, unsettled)
     if decoded != text:
         out.append(decoded)
-    values = " ".join(_decoded(next(v for v in m.groups() if v is not None))
+    values = " ".join(_decoded(next(v for v in m.groups() if v is not None), unsettled)
                       for tag in _HTML_TAG.finditer(_closed(text)) for m in _ATTRIBUTE.finditer(tag.group()))
     if values and values not in out:
         out.append(values)
     return out
 
 
+def as_form(text: str, unsettled: list | None = None) -> list[str]:
+    """The text as a form's query string is read (round A2): "+" as a space (urllib.parse.unquote_plus), in the text as
+    it came and in the text decoded ("%2B" is a "+"), then decoded until nothing changes, so
+    "Ignore+all+previous+instructions", in an href or anywhere, is read as words. [] when the text has no "+" either
+    way."""
+    out = []
+    for base in dict.fromkeys((text, _decoded(text, unsettled) if _encoded(text) else text)):
+        if "+" in base:
+            seen = _decoded(urllib.parse.unquote_plus(base), unsettled)
+            if seen != text and seen not in out:
+                out.append(seen)
+    return out
+
+
 def scan(text: str) -> list[str]:
     """Garuda Layer 1's patterns that fire on the text, on its normalised form, or on what a reader of its HTML sees
-    (as_read) or a model reading the raw HTML sees (as_raw, as_words), each as it is and normalised, in the order found;
-    and UNSETTLED when its decoding doesn't settle within DECODE_PASSES."""
+    (as_read), a model reading the raw HTML sees (as_raw, as_words) or a form's reader sees (as_form), each as it is and
+    normalised, in the order found; and UNSETTLED when any view's decoding doesn't settle within DECODE_PASSES."""
     if not text:
         return []
     # The raw scan is kept so the screen never rests on normalize() alone. No text is known that it catches and the
@@ -215,10 +245,12 @@ def scan(text: str) -> list[str]:
     # for the same reason, and a mutant that drops that lives as well (round 3). The text as it came (raw and
     # normalised) is what catches a tag-shaped injection such as "<system>", which the reader's view takes out.
     flags = layer1(text)
-    views = dict.fromkeys(as_read(text) + as_raw(text) + as_words(text))       # each view once
+    unsettled: list[str] = []
+    views = dict.fromkeys(as_read(text, unsettled) + as_raw(text, unsettled) + as_words(text, unsettled)
+                          + as_form(text, unsettled))                                 # each view once
     for t in (normalize(text), *(v for seen in views for v in (seen, normalize(seen)))):
         flags += [p for p in layer1(t) if p not in flags]
-    if _encoded(text) and not _decode(text)[1]:
+    if unsettled:
         flags.append(UNSETTLED)
     return flags
 
