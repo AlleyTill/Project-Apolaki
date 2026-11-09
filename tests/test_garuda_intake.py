@@ -516,9 +516,13 @@ def test_text_encoded_deeper_than_any_reader_decodes_is_held_for_a_person(home):
 
 # ---- round A2 (2026-11-08): what round A's verifier found -----------------------------------------------------------
 # Item 2: two regular expressions took time quadratic in a run's length, so one crafted listing or funder page could
-# stall the unattended grant hunt. Each size below took seconds before the fix (CPU time, round A's code): the
-# attribute scan 5.8 s, the tag's words 13.8 s. The bounds are generous: the fixed code takes a few milliseconds.
+# stall the unattended grant hunt. Each size below took seconds before the fix (CPU time, round A's code): the tag's
+# words 13.8 s at 8,000 letters; the attribute scan 5.8 s at 8,000 and about 50 s at 24,000. The attribute test uses
+# the larger size because the fix has two parts: without its lookbehind, the possessive pattern alone is still
+# quadratic, 0.9 s at 8,000 letters on an idle machine (under the bound) and 7 s at 24,000. The bounds are generous:
+# the fixed code takes a few milliseconds at either size.
 LONG_RUN = 8000
+LONGER_RUN = 24000
 
 
 def cpu_seconds(f, *args):
@@ -530,7 +534,7 @@ def cpu_seconds(f, *args):
 
 def test_a_long_attribute_name_with_no_value_is_scanned_in_linear_time():
     from apolaki import intake
-    text = "Grant listing. <a " + "b" * LONG_RUN + "> end"
+    text = "Grant listing. <a " + "b" * LONGER_RUN + "> end"
     assert cpu_seconds(intake.as_raw, text) < 1.0
     assert cpu_seconds(intake.scan, text) < 2.0
 
@@ -574,6 +578,19 @@ def test_text_encoded_deeper_than_the_cap_where_a_tag_hides_it_is_held_too(home)
         assert not s.ok and s.flags == [intake.UNSETTLED], deep
     shallower = "Dear applicant, &<b></b>" + "amp;" * (intake.DECODE_PASSES - 3) + "lt;b&gt; hello."
     assert intake.screen(shallower, source="test", kind="fetched page").ok
+
+
+def test_the_words_view_reports_a_decoding_that_doesnt_settle(home):
+    """Only as_words meets the nesting here: entities write a tag ("&lt;b&gt;"), and taking that tag out joins "&" to
+    the "amp;" run. The reader's view takes out only real tags, and the raw text settles at once."""
+    from apolaki import intake
+    deep = "Dear applicant, &&lt;b&gt;" + "amp;" * intake.DECODE_PASSES + "lt;b&gt; hello."
+    for view in (intake.as_read, intake.as_raw, intake.as_form):
+        unsettled = []
+        view(deep, unsettled)
+        assert unsettled == [], f"the setup lost its point: {view.__name__} meets the nesting too"
+    s = intake.screen(deep, source="test", kind="fetched page")
+    assert not s.ok and s.flags == [intake.UNSETTLED]
 
 
 FORM_PLANTED = [
