@@ -1909,6 +1909,15 @@ def test_apolakis_own_index_rebuilt_with_more_in_its_definition_is_listed(home):
     assert X.plan(PERSON).checks() == ["definition:idx_memories_type"]
 
 
+def test_a_hand_added_column_with_a_quoted_name_is_listed_once(home):
+    """Its item in the table's definition is the column's, already listed: a quoted, mixed-case name is still known as
+    that column's, so the definition isn't listed as well."""
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, 'ALTER TABLE memories ADD COLUMN "Donor Note" TEXT')
+    assert X.plan(PERSON).checks() == ["column:memories.Donor Note"]
+
+
 def test_a_definition_is_read_without_its_whitespace_or_column_order():
     from apolaki.agent import erase as X
     one = X._definition("CREATE TABLE t (\n  id TEXT PRIMARY KEY,\n  a TEXT DEFAULT ''\n, b INTEGER DEFAULT 0)")
