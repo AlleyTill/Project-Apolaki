@@ -21,7 +21,9 @@ in place (as_words), so "Ignore all <b previous instructions", whose words a bro
 Since round A2 a "+" is also read as a space, as a form's query string writes one (as_form:
 "Ignore+all+previous+instructions"); a text is held as UNSETTLED when any view's decoding hasn't settled, not only the
 raw text's (a tag can hide the nesting from the raw text); and the two expressions that read tags and attributes run in
-time linear in the text's length (a long run of letters in a tag took seconds before).
+time linear in the text's length (a long run of letters in a tag took seconds before). Since round A3 the "+" is read
+as a space in what the tag views give too, so a tag or comment between "+"-joined words doesn't hide them
+("Ignore+<b></b>all+previous+instructions").
   - A hit quarantines the text for a person: $APOLAKI_HOME/quarantine/q_<sha256 prefix>.json holds the text, its
     sources, its kind, the patterns that fired and when it was seen. The same text seen again is the same entry
     (seen_count, sources), so a listing re-read every night doesn't raise a new alarm each time. Each event is a line
@@ -220,13 +222,17 @@ def as_raw(text: str, unsettled: list | None = None) -> list[str]:
     return out
 
 
-def as_form(text: str, unsettled: list | None = None) -> list[str]:
+def as_form(text: str, unsettled: list | None = None, views: list[str] | None = None) -> list[str]:
     """The text as a form's query string is read (round A2): "+" as a space (urllib.parse.unquote_plus), in the text as
     it came and in the text decoded ("%2B" is a "+"), then decoded until nothing changes, so
-    "Ignore+all+previous+instructions", in an href or anywhere, is read as words. [] when the text has no "+" either
-    way."""
+    "Ignore+all+previous+instructions", in an href or anywhere, is read as words. Since round A3 the same for what the
+    tag views give (views: as_read's, as_words' and as_raw's, found here when not given), since a tag or comment between
+    the words hid them from both readings ("Ignore+<b></b>all+previous+instructions", or "%2<b></b>B" for a "+"). []
+    when no base has a "+"."""
+    if views is None:
+        views = as_read(text, unsettled) + as_words(text, unsettled) + as_raw(text, unsettled)
     out = []
-    for base in dict.fromkeys((text, _decoded(text, unsettled) if _encoded(text) else text)):
+    for base in dict.fromkeys((text, _decoded(text, unsettled) if _encoded(text) else text, *views)):
         if "+" in base:
             seen = _decoded(urllib.parse.unquote_plus(base), unsettled)
             if seen != text and seen not in out:
@@ -246,8 +252,8 @@ def scan(text: str) -> list[str]:
     # normalised) is what catches a tag-shaped injection such as "<system>", which the reader's view takes out.
     flags = layer1(text)
     unsettled: list[str] = []
-    views = dict.fromkeys(as_read(text, unsettled) + as_raw(text, unsettled) + as_words(text, unsettled)
-                          + as_form(text, unsettled))                                 # each view once
+    tagged = as_read(text, unsettled) + as_raw(text, unsettled) + as_words(text, unsettled)
+    views = dict.fromkeys(tagged + as_form(text, unsettled, tagged))                  # each view once
     for t in (normalize(text), *(v for seen in views for v in (seen, normalize(seen)))):
         flags += [p for p in layer1(t) if p not in flags]
     if unsettled:
