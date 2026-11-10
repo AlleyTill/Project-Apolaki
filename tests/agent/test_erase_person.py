@@ -1624,14 +1624,15 @@ def test_what_apolaki_didnt_make_is_listed_and_the_erase_refuses_until_a_person_
              "CREATE VIEW recent AS SELECT id FROM memories",
              "CREATE TRIGGER touched AFTER UPDATE ON memories BEGIN SELECT 1; END")
     p = X.plan(PERSON)
-    assert p.checks() == ["column:memories.note", "table:campaign_notes", "trigger:touched", "view:recent"]
+    assert p.checks() == ["column:memories.note", "index:idx_campaign_notes_body", "table:campaign_notes",
+                          "trigger:touched", "view:recent"]
     assert p.db_other == [] and p.counts() == X.plan(PERSON).counts()
     text = X.describe(p)
-    assert "Not Apolaki's (4)" in text and "WILL REFUSE" in text and "--checked 'table:campaign_notes'" in text
+    assert "Not Apolaki's (5)" in text and "WILL REFUSE" in text and "--checked 'table:campaign_notes'" in text
     before = snapshot(home)
-    for checked, match in [((), "nobody has said they checked: column:memories.note, table:campaign_notes, "
-                                "trigger:touched, view:recent"),
-                           (("table:campaign_notes",), "3 thing\\(s\\) Apolaki didn't create"),
+    for checked, match in [((), "nobody has said they checked: column:memories.note, index:idx_campaign_notes_body, "
+                                "table:campaign_notes, trigger:touched, view:recent"),
+                           (("table:campaign_notes",), "4 thing\\(s\\) Apolaki didn't create"),
                            ((*p.checks(), "table:other"), "didn't list as added by hand")]:
         with pytest.raises(X.EraseError, match=match):
             X.erase(PERSON, confirm=p.code, by="x", reason="asked", checked=checked)
@@ -1639,8 +1640,8 @@ def test_what_apolaki_didnt_make_is_listed_and_the_erase_refuses_until_a_person_
     args = ["erase-person", PERSON, "--confirm", p.code, "--by", "x", "--reason", "asked"]
     assert E.main(args) == 2 and "Apolaki didn't create" in capsys.readouterr().err
     assert E.main(args + [a for t in p.checks() for a in ("--checked", t)]) == 0
-    assert "verified for Apolaki's tables; 4 hand-added table(s), column(s), view(s) or trigger(s) checked by a " \
-           "person" in capsys.readouterr().out
+    assert "verified for Apolaki's tables; 5 hand-added table(s), column(s), index(es), view(s), trigger(s) or " \
+           "definition(s) checked by a person" in capsys.readouterr().out
     [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
     assert rec["verified"] is True and rec["verified_for"] == "Apolaki's own tables"
     assert rec["checked_by_person"] == p.checks()
@@ -2078,3 +2079,236 @@ def test_a_belief_file_that_isnt_utf8_is_refused_with_exit_4_not_a_traceback(hom
         X.plan(PERSON)
     assert type(refused.value) is X.EraseUnreadable
     assert snapshot(home) == before and not (home / "erasures.jsonl").exists()
+
+
+# ---- round A3 (2026-11-09): what round A2's verifier found ----------------------------------------------------------
+# Item 1: an index Apolaki didn't make was never listed, on the reasoning that it holds its own table's values, which go
+# with their rows. An index on an expression keeps the expression's values, which no row holds, and a partial index's
+# WHERE is schema text: base64 of the name in either was certified (verified:true), with the base64 still in the file.
+HAND_INDEXES = [
+    "CREATE INDEX hx ON memories(memory_type || '{b64}')",
+    "CREATE INDEX hx ON memories(memory_type) WHERE source != '{b64}'",
+    "CREATE INDEX hx ON kg_entities(lower(name) || '{b64}')",
+    "CREATE UNIQUE INDEX hx ON wiki_pages(title, '{b64}' || id)",
+    "CREATE INDEX hx ON memories(memory_type)",
+]
+
+
+@pytest.mark.parametrize("ddl", HAND_INDEXES, ids=["expression", "partial", "expression on entities", "unique",
+                                                   "plain"])
+def test_an_index_apolaki_didnt_make_is_listed_and_the_erase_refuses_until_a_person_checks_it(home, ddl):
+    """Plain or not: any index made with a statement that Apolaki's code didn't make (CC's call, round A3)."""
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, ddl.format(b64=b64(PERSON)))
+    p = X.plan(PERSON)
+    assert p.checks() == ["index:hx"] and p.schema == [], X.describe(p)
+    assert "index 'hx': --checked 'index:hx'" in X.describe(p)
+    before = snapshot(home)
+    with pytest.raises(X.EraseError, match="nobody has said they checked: index:hx"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert snapshot(home) == before and not (home / "erasures.jsonl").exists()
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked", checked=("index:hx",))
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["checked_by_person"] == ["index:hx"] and rec["verified"] is True
+
+
+def test_the_verifiers_index_repro_is_refused_on_the_command_line(home, capsys):
+    """Round A2's verifier: the dry run listed nothing, and the erase completed with verified:true while the file held
+    the base64 four times (once in each kept row's index entry, and once in the schema)."""
+    import apolaki.engine as E
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, f"CREATE INDEX hx ON memories(memory_type || '{b64(PERSON)}')")
+    assert E.main(["erase-person", PERSON]) == 0
+    assert "--checked 'index:hx'" in capsys.readouterr().out
+    code = X.plan(PERSON).code
+    args = ["erase-person", PERSON, "--confirm", code, "--by", "x", "--reason", "asked"]
+    assert E.main(args) == 2 and "nobody has said they checked: index:hx" in capsys.readouterr().err
+    assert not (home / "erasures.jsonl").exists()
+    assert E.main(args + ["--checked", "index:hx"]) == 0
+    assert "1 hand-added table(s), column(s), index(es), view(s), trigger(s) or definition(s) checked by a person" \
+        in capsys.readouterr().out
+
+
+def test_an_index_holding_the_name_in_kept_rows_makes_the_erase_incomplete(home):
+    """The erase doesn't read an index's values; the byte check after it reads the database file. An index whose
+    expression writes the name (as character codes, so its definition doesn't name her) holds it in every kept row's
+    entry: after the erase it is still there, and the erase is incomplete, recorded as not verified, even with the
+    person's check."""
+    from apolaki.agent import erase as X
+    plant(home)
+    codes = ",".join(str(ord(c)) for c in PERSON)
+    hand_add(home, f"CREATE INDEX hx ON memories(memory_type || char({codes}))")
+    p = X.plan(PERSON)
+    assert p.checks() == ["index:hx"] and p.schema == [], X.describe(p)
+    with pytest.raises(X.EraseIncomplete, match="the name"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked", checked=("index:hx",))
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is False
+
+
+def test_an_index_sqlite_makes_for_a_unique_constraint_is_not_listed_on_its_own(home):
+    """sqlite_autoindex_... has no statement and holds only its table's columns; what made it is listed instead."""
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, "CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT UNIQUE)")
+    assert db_rows(home, "SELECT count(*) FROM sqlite_master WHERE tbl_name = 'notes' AND type = 'index'") == [(2,)], \
+        "the setup lost its point"
+    assert X.plan(PERSON).checks() == ["table:notes"]
+
+
+# Item 2: a hand-added column named like a table constraint's word hid the constraint. Its name must be quoted ("check"
+# TEXT), and the definition comparison skipped every item whose first token, quotes taken off, was a hand-added
+# column's name: an unquoted CHECK too. The table was still listed, through its column, but not its definition.
+KEYWORD_COLUMNS = [
+    ('"check"', f"CHECK (memory_type != '{b64(PERSON)}')"),
+    ('"constraint"', f"CONSTRAINT c1 CHECK (memory_type != '{b64(PERSON)}')"),
+    ('"CONSTRAINT"', f"constraint c1 check (memory_type != '{b64(PERSON)}')"),
+    ("[unique]", "UNIQUE (id, memory_type)"),
+    ('`foreign`', f'FOREIGN KEY (id) REFERENCES memories(id) MATCH "{b64(PERSON)}"'),
+]
+
+
+@pytest.mark.parametrize("column,constraint", KEYWORD_COLUMNS, ids=["check", "constraint", "upper case", "unique",
+                                                                    "foreign"])
+def test_a_column_named_like_a_constraint_word_doesnt_hide_a_table_constraint(home, column, constraint):
+    """The verifier's case, and the other constraint words. PRIMARY can't be one: memories has its primary key, and a
+    table has one (the unit test below holds that word)."""
+    from apolaki.agent import erase as X
+    own_schema_with(home, ms.SCHEMA.replace("    archive_reason TEXT\n",
+                                            f"    archive_reason TEXT,\n    {column} TEXT,\n    {constraint}\n"))
+    plant(home)
+    name = column.strip('"[]`')
+    assert X.plan(PERSON).checks() == [f"column:memories.{name}", "definition:memories"], X.describe(X.plan(PERSON))
+
+
+def test_an_item_is_a_columns_own_only_when_its_first_word_isnt_a_constraint_word_unquoted():
+    from apolaki.agent import erase as X
+    for word in ("constraint", "check", "primary", "unique", "foreign"):
+        for written in (word, word.upper(), word.title()):
+            assert not X._column_item((written, "(", "x", ")"), {word}), written
+        for quoted in (f'"{word}"', f"[{word}]", f"`{word}`", f"'{word}'"):
+            assert X._column_item((quoted, "TEXT"), {word}), quoted
+    assert X._column_item(("note", "TEXT"), {"note"}) and not X._column_item(("note", "TEXT"), {"other"})
+    try:
+        empty = X._column_item((), {"note"})
+    except IndexError as e:
+        pytest.fail(f"an empty item broke the comparison: {e!r}")
+    assert not empty
+
+
+def test_a_column_named_like_a_constraint_word_with_no_constraint_is_listed_once(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, 'ALTER TABLE memories ADD COLUMN "check" TEXT DEFAULT \'\'',
+             'ALTER TABLE memories ADD COLUMN "Constraint" TEXT')
+    assert X.plan(PERSON).checks() == ["column:memories.Constraint", "column:memories.check"]
+
+
+# Item 3: round A2's verifier's test gap D2: a definition whose only difference is before its column list.
+def test_a_comment_before_the_column_list_is_listed(home):
+    from apolaki.agent import erase as X
+    own_schema_with(home, ms.SCHEMA.replace("CREATE TABLE IF NOT EXISTS memories (",
+                                            f"CREATE TABLE IF NOT EXISTS memories /* {b64(PERSON)} */ (", 1))
+    plant(home)
+    assert db_rows(home, f"SELECT count(*) FROM sqlite_master WHERE sql LIKE '%{b64(PERSON)}%'") == [(1,)], \
+        "the setup lost its point"
+    assert X._definition(db_rows(home, "SELECT sql FROM sqlite_master WHERE name = 'memories'")[0][0])[1:] == \
+        X._own_schema(False)[1][("table", "memories")][1:], "the setup lost its point: more than the head differs"
+    assert X.plan(PERSON).checks() == ["definition:memories"]
+
+
+# Item 2: separators as a class. Rounds A and A2 listed the characters between a name's parts one by one; each of these
+# was still missed entirely, not even listed as a near-match (the first five are round A2's verifier's).
+CLASS_SEPARATORS = [0x2E33, 0x16EB, 0x1361, 0x00A6, 0x2981, ord("@"), ord("!"), ord("$"), 0x2605, 0x1F338, 0x00A9,
+                    0x2E3A]
+
+
+@pytest.mark.parametrize("sep", CLASS_SEPARATORS, ids=lambda c: f"U+{c:04X}")
+def test_any_punctuation_or_symbol_between_the_parts_is_a_separator(home, sep):
+    import unicodedata
+    from apolaki.agent import erase as X
+    assert unicodedata.category(chr(sep))[0] in "PS"
+    s = open_store(home)
+    mid = s.store(f"Note: Marisol{chr(sep)}Quintero called about the appeal.")
+    kept = s.store("Brand voice: plain and warm.")
+    s.close()
+    p = X.plan(PERSON)
+    assert [m["id"] for m in p.memories] == [mid], X.describe(p)
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+
+
+@pytest.mark.parametrize("sep", [0x2E33, 0x00A6, 0x2022], ids=lambda c: f"U+{c:04X}")
+def test_a_separator_between_the_parts_in_wide_text_is_read_too(home, sep):
+    """A wide reading turns each run of characters that can't stand in the name into one NUL (_noise), which no name
+    holds; a separator must not be one of them, or the name in UTF-16 with it between the parts is missed."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    kept = s.store("Unrelated note about the garden.")
+    other = s.store("Brand voice: plain and warm.")
+    s.close()
+    hand_add(home, "UPDATE memories SET source = ? WHERE id = ?",
+             params=((f"Marisol{chr(sep)}Quintero".encode("utf-16-le"), kept),))       # a blob, read wide
+    p = X.plan(PERSON)
+    assert [m["id"] for m in p.memories] == [kept] and p.unreadable == [], X.describe(p)
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [other]
+
+
+def test_the_separator_class_is_every_punctuation_and_symbol_character_and_white_space():
+    """Its own list: every character of planes 0 and 1, by category, against the class; and no letter, digit or mark."""
+    import unicodedata
+    from apolaki.agent import erase as X
+    sep = re.compile(X._sep())
+    for c in range(0x20000):
+        ch = chr(c)
+        assert bool(sep.fullmatch(ch)) == (unicodedata.category(ch)[0] in "PS" or ch.isspace()), hex(c)
+    assert not any(unicodedata.category(chr(c))[0] in "PS" for c in range(0x20000, 0x110000))
+    assert X._sep().isascii()
+
+
+# Item 2: an empty folder, a link that leads to no file, or a link to a folder, named for the person, wasn't listed:
+# only files were walked.
+def test_an_empty_folder_or_a_dangling_link_named_for_the_person_is_listed(home):
+    import os
+    from apolaki.agent import erase as X
+    plant(home)
+    (home / "exports" / "Marisol Quintero").mkdir(parents=True)
+    (home / "grant-drafts").mkdir()
+    os.symlink(home / "nowhere.md", home / "grant-drafts" / "marisol_quintero_draft.md")
+    (home / "folder").mkdir()
+    os.symlink(home / "folder", home / "Marisol-Quintero-files")
+    (home / "wiki" / "Marisol Quintero").mkdir()
+    os.mkfifo(home / "quarantine" / "marisol.quintero.pipe")
+    (home / "approval-queue" / "Marisol Quintero").mkdir()
+    (home / "approval-queue" / "Marisol Quintero" / "item.json").write_text(json.dumps({"status": "pending"}))
+    (home / "exports" / "someone-else").mkdir()
+    locked = home / "exports" / "marisol-quintero-locked"
+    locked.mkdir()
+    (locked / "notes.txt").write_text("x")
+    locked.chmod(0)
+    try:
+        p = X.plan(PERSON)
+    finally:
+        locked.chmod(0o700)
+    listed = dict(p.elsewhere)
+    expected = {"exports/Marisol Quintero": "an empty folder",
+                "grant-drafts/marisol_quintero_draft.md": "a link that leads to no file",
+                "Marisol-Quintero-files": "a link to a folder", "wiki/Marisol Quintero": "an empty folder",
+                "quarantine/marisol.quintero.pipe": "not a regular file",
+                "exports/marisol-quintero-locked": "a folder that can't be read"}
+    assert all(listed.get(path) == 1 for path in expected), X.describe(p)
+    assert p.named_entries == expected
+    assert "approval-queue/Marisol Quintero" not in listed and "exports/someone-else" not in listed
+    assert "approval-queue/Marisol Quintero/item.json" in listed           # the folder, through what is in it
+    text = X.describe(p)
+    assert "exports/Marisol Quintero (an empty folder, its name or a folder it is in naming them)" in text
+    assert "grant-drafts/marisol_quintero_draft.md (a link that leads to no file, its name or a folder it is in " \
+           "naming them)" in text
+    done = X.erase(PERSON, confirm=p.code, by="x", reason="asked")           # the locked folder is readable again,
+    erased = {path for path, _ in done["elsewhere"]}                         # so its file is listed in its place
+    assert erased >= set(expected) - {"exports/marisol-quintero-locked"} | {"exports/marisol-quintero-locked/notes.txt"}
+    assert (home / "exports" / "Marisol Quintero").is_dir() and (home / "wiki" / "Marisol Quintero").is_dir()
+    assert os.path.islink(home / "grant-drafts" / "marisol_quintero_draft.md")

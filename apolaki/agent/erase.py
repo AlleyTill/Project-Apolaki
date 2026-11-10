@@ -15,13 +15,14 @@ What counts as the name, for the name and each alias:
   - case, accents, look-alike letters, curly quotes and invisible characters are folded (apolaki.security.normalize),
     so "María López" also finds "MARIA LOPEZ"; and since round A small capitals and the Cherokee letters that look
     Latin are read as the Latin letter (_SKELETON), so "Marisol" also finds the small-capital and "\u13b7arisol" forms;
-  - the parts of a name are the pieces between spaces, hyphens and dashes, apostrophes, full stops, underscores,
-    markup characters (* [ ] ( ) { } < > / \\ | # ~ ^ = +), commas, semicolons, colons, middle dots, and since round
-    A2 the bullet, the dot and bullet operators, the ideographic and Arabic commas and "&" (_SEP), and in the text any
-    run of those, or nothing, may stand between two parts: "Jean-Luc Moreau" finds "Jean Luc Moreau", "Jean–Luc
-    Moreau" (an en dash), "JeanLuc Moreau", "jean_luc_moreau" (a wiki file name) and "jean.luc.moreau"; "O'Brien" finds
-    "OBrien" and "O Brien"; "Marisol Quintero" finds "**Marisol** Quintero", "Marisol/Quintero", "Marisol,Quintero" (a
-    CSV row) and "Marisol\u00b7Quintero";
+  - the parts of a name are the pieces between white space, punctuation and symbols: since round A3 every character
+    of Unicode's punctuation and symbol categories (_sep), where rounds A and A2 listed them one by one (spaces,
+    hyphens and dashes, apostrophes, full stops, underscores, markup characters, commas, semicolons, colons, middle
+    dots, bullets, the ideographic and Arabic commas, "&"); and in the text any run of those, or nothing, may stand
+    between two parts: "Jean-Luc Moreau" finds "Jean Luc Moreau", "Jean–Luc Moreau" (an en dash), "JeanLuc Moreau",
+    "jean_luc_moreau" (a wiki file name) and "jean.luc.moreau"; "O'Brien" finds "OBrien" and "O Brien"; "Marisol
+    Quintero" finds "**Marisol** Quintero", "Marisol/Quintero", "Marisol,Quintero" (a CSV row), "Marisol\u00b7Quintero",
+    "Marisol\u2e33Quintero" (a raised dot), "Marisol\u00a6Quintero" (a broken bar) and "Marisol@Quintero";
   - a match must not touch a letter or a digit of a script written with spaces before it, nor such a letter after it.
     A digit after the name is still the name ("marisol.quintero85@...", "@MarisolQuintero1990"). A character of a
     script written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Myanmar, Tibetan, Yi) or of Korean, whose
@@ -68,18 +69,24 @@ until a person rewrites or removes it. Before round A such a cell stopped the dr
 holds for the engine's belief files: since round A2 one that isn't valid UTF-8 stops the dry run and the erase with
 that refusal (exit code 4), where the belief log stopped them with a Python error before.
 
-It certifies only Apolaki's own schema (round A): the tables and columns memory_store makes, the vector indexes'
-tables (as the sqlite-vec loaded here makes them) and SQLite's own counters. Every other table, every column added to
-one of Apolaki's tables (a generated column too, since round A2), every view and trigger, and every one of Apolaki's
-own tables and indexes whose definition says more than its code's (a default, a CHECK, an index's expression or
-WHERE: since round A2 they are compared by definition, not by name only) is listed in the dry run as not Apolaki's,
-whatever it holds, and the erase refuses until a person has checked each by hand and names each with --checked
-(exactly as the dry run prints it: "table:NAME", "column:TABLE.COLUMN", "view:NAME", "trigger:NAME",
-"definition:NAME"): a table, column or definition for the name in any form, a trigger for what it copies when the
-erase deletes rows (it fires then). The erase still reads those tables and columns, and refuses on a name it finds
-there; the person's check covers what it can't read (another encoding, base64, a compressed or encrypted value). The
-record and the command line then read "verified for Apolaki's tables; N hand-added ... checked by a person". An index
-Apolaki didn't make isn't listed: it holds its own table's values, which go with their rows.
+It certifies only Apolaki's own schema (round A): the tables, columns and indexes memory_store makes, the vector
+indexes' tables (as the sqlite-vec loaded here makes them) and SQLite's own counters. Every other table, every column
+added to one of Apolaki's tables (a generated column too, since round A2), every index made with a statement Apolaki's
+code didn't make (since round A3, on any table: an expression index keeps its expression's values, which no row holds,
+and a partial index's WHERE is schema text), every view and trigger, and every one of Apolaki's own tables and indexes
+whose definition says more than its code's (a default, a CHECK, an index's expression or WHERE: since round A2 they
+are compared by definition, not by name only) is listed in the dry run as not Apolaki's, whatever it holds, and the
+erase refuses until a person has checked each by hand and names each with --checked (exactly as the dry run prints
+it: "table:NAME", "column:TABLE.COLUMN", "index:NAME", "view:NAME", "trigger:NAME", "definition:NAME"): a table,
+column, index or definition for the name in any form, a trigger for what it copies when the erase deletes rows (it
+fires then). The erase still reads those tables and columns, and refuses on a name it finds there; it doesn't read an
+index's values, and its byte check after the erase reads them only as the database file's bytes, so a kept row's index
+entry that holds the name as UTF-8 text makes the erase incomplete; the person's check covers what it can't read
+(another encoding, base64, a compressed or encrypted value). The record and the command line then read "verified for
+Apolaki's tables; N hand-added ... checked by a person". Before round A3 an index Apolaki didn't make wasn't listed, on
+the reasoning that it holds its own table's values, which go with their rows: base64 of the name in an expression
+index was certified. An index SQLite makes itself for a UNIQUE or PRIMARY KEY (no statement) still isn't: SQLite
+allows only columns there.
 Then it rebuilds the vector indexes from what remains, VACUUMs the database (with secure_delete on, so the deleted rows
 are zeroed even if VACUUM can't run) and truncates its write-ahead log. Its check reads every text column of every
 table again; reads back every byte of the database files (folding case, accents, look-alike letters and invisible
@@ -101,7 +108,8 @@ What it can't do:
     aliases, and read what each finds in the dry run. The byte check of the database files doesn't take markup out,
     nor read UTF-16 or UTF-32 (the rows are read with markup taken out, and in both). See docs/KNOWN_LIMITS.md
     section 5.
-  - certify a table, column, view, trigger or definition Apolaki's code didn't make: a person checks those (above).
+  - certify a table, column, index, view, trigger or definition Apolaki's code didn't make: a person checks those
+    (above).
   - erase by a name shorter than three letters (a two-character Chinese name included): it would match inside too much.
   - keep the rest of a memory. A memory that names the person goes whole, with whatever else it said; the dry run
     shows each one, so a person can store again what should stay, without the name.
@@ -110,8 +118,9 @@ What it can't do:
     in an approval-queue item (with its status), a grant draft or a grant hunt file that names the person, read as
     memory is read, with the text around it; and every other file under $APOLAKI_HOME the name (or a near-match) is
     in, by name. Since round A2 a file whose name, or a folder it is in, names the person is listed too
-    ("grant-drafts/marisol_quintero_memorial_draft.md"). A person deals with each by hand. Copies outside $APOLAKI_HOME
-    are beyond it.
+    ("grant-drafts/marisol_quintero_memorial_draft.md"), and since round A3 an empty folder and a link that leads to
+    no file (a dangling link, or a link to a folder) whose name names them, the wiki's included. A person deals with
+    each by hand. Copies outside $APOLAKI_HOME are beyond it.
   - run beside a live Apolaki. VACUUM needs the database to itself: stop the scheduled jobs and the MCP server
     first (docs/STOPPING.md).
   - settle a licence question. Apolaki's licence carries the SAFE-AI module, whose memory-sovereignty clause says
@@ -387,15 +396,36 @@ def _byte_texts(raw: bytes) -> list[str]:
     return out + [_fold_fast(_unescape(text[a:b])) for a, b in spans]
 
 
-# Between two parts of a name: any run of spaces, hyphens and dashes, apostrophes, full stops, underscores, markup
-# characters (* [ ] ( ) { } < > / \ | # ~ ^ = +), and since round A commas, semicolons, colons and middle dots (a CSV
-# row, "Marisol;Quintero", "Marisol\u00b7Quintero", a Japanese name in katakana with its dot), and since round A2 the
-# other dots and commas round A's verifier wrote between the parts, and "&", or none.
-# \u2010-\u2015 are the Unicode hyphens and dashes; \u2212 is the minus sign; \u00b7, \u2027, \u30fb and \u2e31 are
-# middle dots; \u22c5 and \u2219 are the dot and bullet operators, \u2022 the bullet; \u3001 is the ideographic comma
-# (its halfwidth and small forms fold to it) and \u060c the Arabic comma.
-_SEP = r"[\s\-\u2010-\u2015\u2212'._*\[\](){}<>/\\|#~^=+,;:&\u00b7\u2027\u30fb\u2e31\u22c5\u2219\u2022\u3001\u060c]"
-_SPLIT = re.compile(_SEP + "+")
+# Between two parts of a name: any run of white space, punctuation and symbols, or none. Since round A3 that is every
+# character of Unicode's punctuation (P*) and symbol (S*) categories, as a class: round A and A2 listed separators one
+# by one (spaces, hyphens and dashes, apostrophes, full stops, underscores, markup characters, commas, semicolons,
+# colons, middle dots, bullets, the ideographic and Arabic commas, "&"), and each round's verifier found more that a
+# name could be written with and the erase missed entirely, not even as a near-match (round A2's: U+2E33 RAISED DOT,
+# U+16EB RUNIC SINGLE PUNCTUATION, U+1361 ETHIOPIC WORDSPACE, U+00A6 BROKEN BAR, U+2981 Z NOTATION SPOT). The class
+# takes in every one of those lists, and "@", "!", "$", the emoji and the rest as well: "Marisol@Quintero" is read as
+# the name, the safe way (the dry run lists it, and the memory goes whole). Planes 0 and 1 hold every such character
+# (planes 2 and 3 are ideographs, 14 tags and variation selectors, 15 and 16 private use). The class is written with
+# escapes, so a pattern built from it holds none of its characters (_noise reads a pattern's characters), and built on
+# first use (scanning the planes' categories takes about a fifth of a second), since only the erase needs it.
+@functools.lru_cache(maxsize=1)
+def _sep() -> str:
+    """The separator class (above), as regular-expression source."""
+    def esc(c: int) -> str:
+        return f"\\x{c:02x}" if c < 0x100 else f"\\u{c:04x}" if c < 0x10000 else f"\\U{c:08x}"
+    runs: list[list[int]] = []
+    for c, cat in enumerate(map(unicodedata.category, map(chr, range(0x20000)))):
+        if cat[0] in "PS":
+            if runs and c == runs[-1][1] + 1:
+                runs[-1][1] = c
+            else:
+                runs.append([c, c])
+    return "[\\s" + "".join(esc(a) + (f"-{esc(b)}" if b > a else "") for a, b in runs) + "]"
+
+
+@functools.lru_cache(maxsize=1)
+def _split() -> re.Pattern:
+    """A run of separators (_sep), to split a name into its parts."""
+    return re.compile(_sep() + "+")
 # Scripts written without spaces between words (Chinese, Japanese, Thai, Lao, Khmer, Myanmar, Tibetan, Yi), and
 # Korean, whose particles and honorifics attach to a name: a name written in one has no word edge to keep, and a
 # character of one next to a name in another script is a separator ("Quintero\u3055\u3093").
@@ -423,10 +453,10 @@ def _matcher(names: list[str], edges: bool = True) -> re.Pattern:
     finds that the pattern with edges doesn't is a near-match, the name inside a longer word."""
     alts = []
     for n in names:
-        parts = [p for p in _SPLIT.split(_fold(n)) if p]
+        parts = [p for p in _split().split(_fold(n)) if p]
         if not parts or len("".join(parts)) < MIN_NAME_CHARS:
             raise EraseError(f"{n!r} is too short to erase by: give a name of at least {MIN_NAME_CHARS} letters")
-        body = (_SEP + "*").join(re.escape(p) for p in parts)
+        body = (_sep() + "*").join(re.escape(p) for p in parts)
         if edges:
             first, last = parts[0][0], parts[-1][-1]
             before = "" if _NO_SPACE_CHAR.match(first) else _EDGE_BEFORE
@@ -623,7 +653,7 @@ def _noise(pattern: str) -> re.Pattern:
     folds = _fold_fast("\x00".join(map(chr, codes))).split("\x00")
     if len(folds) != len(codes):                         # not expected: then only NUL is noise
         return re.compile("\x00+")
-    name, sep = set(pattern) | set(unicodedata.normalize("NFKD", pattern)), re.compile(_SEP)
+    name, sep = set(pattern) | set(unicodedata.normalize("NFKD", pattern)), re.compile(_sep())
     return re.compile(_class_of([0] + [c for c, f in zip(codes, folds) if f and not 0x20 <= c <= 0x7E
                                        and not sep.search(f)
                                        and not (set(f) | set(unicodedata.normalize("NFKD", f))) & name]).pattern
@@ -762,6 +792,7 @@ class Plan:
     elsewhere: list[tuple[str, int]] = field(default_factory=list)
     elsewhere_near: list[tuple[str, int]] = field(default_factory=list)   # files with near-matches only
     named_paths: list[str] = field(default_factory=list)    # files whose path (name or folder) names the person
+    named_entries: dict = field(default_factory=dict)       # {path: what}: a folder or link so named that isn't a file
     records: list[dict] = field(default_factory=list)       # {"kind", "file", "where", "text"}: listed, never changed
     db_other: list[dict] = field(default_factory=list)      # {"table", "column", "rows"}: named where it can't remove
     unreadable: list[dict] = field(default_factory=list)    # {"table", "column", "rows"}: TEXT that isn't valid UTF-8
@@ -874,13 +905,29 @@ def _unquoted(token: str) -> str:
     return token.casefold()
 
 
+# The words that start a table constraint in SQLite's grammar. A column named one of them must be quoted ("check"
+# TEXT); unquoted, the word starts a constraint ("constraint TEXT" is a constraint named TEXT, not a column).
+_CONSTRAINT_WORDS = frozenset({"constraint", "check", "primary", "unique", "foreign"})
+
+
+def _column_item(item: tuple, added: set[str]) -> bool:
+    """Whether an item of a table's definition is the definition of one of the columns in added: its first token names
+    one, and isn't a table constraint's word written unquoted (round A3: a column added by hand named "check" or
+    "constraint" hid a table CHECK with base64 in it, since the CHECK's item starts with the column's name,
+    unquoted)."""
+    if not item or _unquoted(item[0]) not in added:
+        return False
+    return item[0].casefold() not in _CONSTRAINT_WORDS          # a quoted token keeps its quotes here, so never is one
+
+
 def _redefined(mine: tuple | None, own: tuple | None, added: set[str]) -> bool:
     """Whether a definition (_definition) says more than Apolaki's own: another head or tail (a quoted name, WITHOUT
     ROWID, an index's WHERE), or an item its own doesn't have (a default, a CHECK, an expression). The items of the
-    columns in added, listed as hand-added columns already, don't count; an item missing says nothing more."""
+    columns in added, listed as hand-added columns already, don't count (_column_item); an item missing says nothing
+    more."""
     if mine is None or own is None:
         return mine != own
-    items = {i for i in mine[1] if not (i and _unquoted(i[0]) in added)}
+    items = {i for i in mine[1] if not _column_item(i, added)}
     return mine[0] != own[0] or mine[2] != own[2] or not items <= own[1]
 
 
@@ -914,9 +961,15 @@ def _hand_added(con, with_vec: bool) -> list[dict]:
         didn't make. A column of a table added by hand is the table's;
       - each of Apolaki's own tables and indexes whose definition says more than its code's (_redefined, round A2): a
         hand-rebuilt memories table whose DEFAULT or CHECK holds base64 has Apolaki's name and columns, and only its
-        definition shows it.
-    An index Apolaki didn't make isn't listed: it holds its own table's values, which go with their rows (a name in an
-    index's name or definition is a schema trace)."""
+        definition shows it;
+      - each index made with a statement that Apolaki's code didn't make (round A3), on any table: an index on an
+        expression keeps the expression's values, which no table's row holds, and a partial index's WHERE is schema
+        text, so base64 of the name written into either was certified before (verified:true, with the base64 still in
+        the database file: round A2's verifier). An index SQLite makes itself for a table's UNIQUE or PRIMARY KEY
+        (sqlite_autoindex_..., with no statement) isn't listed: it holds only the values of its table's columns
+        (SQLite allows no expression there), which go with their rows, and what made it is listed when it isn't
+        Apolaki's own (a table, a column, or a table's definition with the UNIQUE in it).
+    A name in an index's name or definition, as in any schema object's, is a schema trace (_schema)."""
     own, defs = _own_schema(with_vec)
     out, added = [], {}
     for kind, name, col in _objects(con) - own:
@@ -926,8 +979,11 @@ def _hand_added(con, with_vec: bool) -> list[dict]:
         elif kind in ("table", "view", "trigger"):
             out.append({"kind": kind, "name": name, "token": f"{kind}:{name}"})
     for kind, name, sql in con.execute("SELECT type, name, sql FROM sqlite_master").fetchall():
-        if (kind, name) in defs and _redefined(_definition(sql), defs[kind, name], added.get(name, set())):
-            out.append({"kind": "definition", "name": name, "token": f"definition:{name}"})
+        if (kind, name) in defs:
+            if _redefined(_definition(sql), defs[kind, name], added.get(name, set())):
+                out.append({"kind": "definition", "name": name, "token": f"definition:{name}"})
+        elif kind == "index" and sql is not None:
+            out.append({"kind": "index", "name": name, "token": f"index:{name}"})
     return sorted(out, key=lambda h: (h["kind"], h["name"]))
 
 
@@ -968,6 +1024,32 @@ def _unreadable_file(path: Path, e: UnicodeDecodeError) -> EraseUnreadable:
     return EraseUnreadable(f"{path} isn't valid UTF-8 (byte {e.start} of it), so whether it names the person can't be "
                            f"read with certainty, and the erase couldn't rewrite it. Nothing was removed. A person "
                            f"rewrites it as UTF-8, or removes what isn't, then runs the dry run again")
+
+
+def _entry_kind(f: Path) -> str | None:
+    """What a path that isn't a file is, for the dry run, when nothing under it is listed in its place (round A3): a
+    link to no file (dangling, or to a folder, which the walk doesn't follow), an empty folder, a folder that can't be
+    read, or something else that isn't a regular file (a pipe, a socket: never read, since reading a pipe waits for a
+    writer). None for a folder with something in it: each thing in it is listed by its own path, which holds the
+    folder's name."""
+    try:
+        if f.is_symlink():
+            return "a link to a folder" if f.is_dir() else "a link that leads to no file"
+        if f.is_dir():
+            return None if any(f.iterdir()) else "an empty folder"
+    except OSError:
+        return "a folder that can't be read"
+    return "not a regular file"
+
+
+def _list_named_entry(out: Plan, f: Path, shown: str, named: bool) -> None:
+    """A path under $APOLAKI_HOME that isn't a file, whose name, or a folder it is in, names the person (named): listed
+    in the dry run with what it is (_entry_kind), as a file named so is (round A3: only files were walked, so an empty
+    folder or a dangling link named for the person wasn't listed)."""
+    what = _entry_kind(f) if named else None
+    if what:
+        out.elsewhere.append((shown, 1))
+        out.named_entries[shown] = what
 
 
 def _snippet(text: str, word: str) -> str:
@@ -1124,9 +1206,10 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
     kept_by_file = {_wiki_name(n): n for n in kept}
     if p["wiki"].is_dir():
         for f in sorted(p["wiki"].rglob("*")):
-            if not f.is_file():
-                continue
             rel = str(f.relative_to(p["wiki"]))
+            if not f.is_file():
+                _list_named_entry(out, f, "wiki/" + rel, named(rel.replace("_", " ")))
+                continue
             text = f.read_text(encoding="utf-8", errors="ignore")
             if rel in page_action:
                 out.wiki_files.append({"file": rel, "action": page_action[rel]["action"],
@@ -1167,9 +1250,12 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
 
     handled = {p["db"], p["wal"], p["shm"], p["beliefs"], p["belief_log"], p["ledger"]}
     for f in sorted(home.rglob("*")) if home.is_dir() else []:
-        if not f.is_file() or f in handled or p["wiki"] in f.parents:
+        if f in handled or p["wiki"] in f.parents:
             continue
         rel = str(f.relative_to(home))
+        if not f.is_file():
+            _list_named_entry(out, f, rel, named(rel))
+            continue
         by_name = named(rel)          # its name, or a folder it is in, names the person (round A2)
         if by_name:
             out.named_paths.append(rel)
@@ -1505,13 +1591,14 @@ def describe(p: Plan) -> str:
                      f"WILL REFUSE until a person renames or drops these:")
         lines += [f"  {s['type']} {s['name']!r}: its {s['where']}" for s in p.schema]
     if p.hand_added:
-        lines.append(f"\nNot Apolaki's ({len(p.hand_added)}): tables, columns (generated ones too), views and triggers "
-                     f"its code didn't make, and its own tables and indexes whose definition says more than its code's "
-                     f"(a default, a constraint, an expression). This erase reads them, but certifies only Apolaki's "
-                     f"own tables, since text can be stored in them in ways it doesn't read (base64, say). The erase "
-                     f"WILL REFUSE until a person has checked each by hand (a table, column or definition for the name "
-                     f"in any form; a view or trigger for what it reads, and a trigger for what it copies when the "
-                     f"erase deletes rows), and names each with --checked:")
+        lines.append(f"\nNot Apolaki's ({len(p.hand_added)}): tables, columns (generated ones too), indexes, views "
+                     f"and triggers its code didn't make, and its own tables and indexes whose definition says more "
+                     f"than its code's (a default, a constraint, an expression). This erase reads the tables and "
+                     f"columns but not an index's values, and certifies only Apolaki's own tables, since text can be "
+                     f"stored in them in ways it doesn't read (base64, say). The erase WILL REFUSE until a person has "
+                     f"checked each by hand (a table, column, index or definition for the name in any form, an index "
+                     f"for what its expression and WHERE hold; a view or trigger for what it reads, and a trigger for "
+                     f"what it copies when the erase deletes rows), and names each with --checked:")
         lines += [f"  {h['kind']} {h['name']!r}: --checked {h['token']!r}" for h in p.hand_added]
     if p.near:
         lines.append(f"\nNear-matches ({len(p.near)}): the name inside a longer word, in what this erase keeps. The "
@@ -1529,7 +1616,8 @@ def describe(p: Plan) -> str:
     other = [(path, n) for path, n in p.elsewhere if path not in {r["file"] for r in p.records}]
     if other:
         lines.append(f"\nNot memory, so NOT erased by this command; the name is also in ({len(other)}):")
-        lines += [f"  {path} ({'unreadable' if n < 0 else f'{n} time(s)'}"
+        lines += [f"  {path} ({p.named_entries[path]}, its name or a folder it is in naming them)"
+                  if path in p.named_entries else f"  {path} ({'unreadable' if n < 0 else f'{n} time(s)'}"
                   f"{', its name or folder included' if path in p.named_paths else ''})" for path, n in other]
         lines.append("  A person deals with these by hand (see docs/DATA_LIFECYCLE.md).")
     if p.elsewhere_near:

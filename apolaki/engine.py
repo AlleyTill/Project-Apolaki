@@ -256,8 +256,8 @@ def main(argv=None) -> int:
     x.add_argument("--not-them", action="append", default=[], metavar="WORD",
                    help="a near-match the dry run listed that is someone else; repeat for each (needed for every one)")
     x.add_argument("--checked", action="append", default=[], metavar="THING",
-                   help="a table, column, view, trigger or definition the dry run listed as not Apolaki's, which a "
-                        "person has checked by hand for the name; repeat for each (needed for every one)")
+                   help="a table, column, index, view, trigger or definition the dry run listed as not Apolaki's, "
+                        "which a person has checked by hand for the name; repeat for each (needed for every one)")
     a = ap.parse_args(argv)
     if a.cmd == "erase-person":
         from .agent import erase as X
@@ -277,7 +277,8 @@ def main(argv=None) -> int:
               f"{c['triples']} triples, {c['wiki_pages']} wiki pages and {c['wiki_files']} wiki files touched, "
               f"{c['beliefs']} beliefs; checked every text column of every table, the database files byte for byte, "
               f"the wiki and the belief files; verified for Apolaki's tables; {len(done['checked'])} hand-added "
-              f"table(s), column(s), view(s) or trigger(s) checked by a person; {done['near']} near-match(es) ruled "
+              f"table(s), column(s), index(es), view(s), trigger(s) or definition(s) checked by a person; "
+              f"{done['near']} near-match(es) ruled "
               f"someone else and kept; recorded in {done['ledger']} without the name")
         if done["elsewhere"]:
             print(f"still named in {len(done['elsewhere'])} file(s) that aren't memory (not touched): "
