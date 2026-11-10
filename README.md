@@ -94,11 +94,12 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   taken out, and the database files byte by byte. A trace left, or a step that failed, is reported as an incomplete
   erase. The name inside a longer word ("Quinterova") is a near-match: the dry run lists each one, and the erase refuses
   until a person rules it someone else (`--not-them`) or gives it as an alias. It certifies only Apolaki's own tables: a
-  table, column, view or trigger its code didn't make, or one of its own whose definition says more than its code
-  writes, is listed, and the erase refuses until a person says they checked each (`--checked`). It finds people by the
-  names given, and it leaves records that aren't memory (the approval queue, grant files, the quarantine) for a person
-  to handle, listing each place in them that names the person. [docs/DATA_LIFECYCLE.md](docs/DATA_LIFECYCLE.md) says
-  what Apolaki keeps, about whom, for how long (until a person removes it) and who can erase it.
+  table, column, index, view or trigger its code didn't make, or one of its own whose definition says more than its
+  code writes, is listed, and the erase refuses until a person says they checked each (`--checked`). It finds people
+  by the names given, and it leaves records that aren't memory (the approval queue, grant files, the quarantine) for a
+  person to handle, listing each place in them that names the person.
+  [docs/DATA_LIFECYCLE.md](docs/DATA_LIFECYCLE.md) says what Apolaki keeps, about whom, for how long (until a person
+  removes it) and who can erase it.
 - **A grant outcome log.** `python -m apolaki.grants outcome KEY applied|awarded|declined|no_reply --date D --by NAME`
   appends what happened to an application to `grant-hunt/outcomes.jsonl`, beside the grant hunt's seen-list, with
   one primary reason and its source when there is one (no reason without a source). `python -m apolaki.grants
@@ -140,7 +141,8 @@ python -m apolaki.grants outcomes                         # grant outcomes in co
 python -m apolaki.intake list                             # outside text the screen quarantined, for a person
 python -m apolaki.engine erase-person "NAME"              # a dry run; then --confirm CODE --by WHO --reason WHY
                                                           # (and --not-them WORD for each near-match it lists,
-                                                          # --checked THING for each table it didn't make)
+                                                          # --checked THING for each table, column or index
+                                                          # it didn't make)
 python -m apolaki.agent.agent                 # the interactive agent (/rule TEXT adds a house rule)
 python -m apolaki.agent.style_pass draft.md   # the judgement pass on a finished piece
 python -m apolaki.agent.fact_checker draft.md # the fact checker
