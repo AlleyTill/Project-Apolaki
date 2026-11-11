@@ -2385,6 +2385,20 @@ def test_a_symbol_the_fold_makes_letters_of_between_the_parts_is_found_and_erase
     assert json.loads((home / "erasures.jsonl").read_text())["verified"] is True and out["counts"]["memories"] == 2
 
 
+@pytest.mark.xfail(strict=True, reason="a known limit (KNOWN_LIMITS, round A4): a symbol read as a separator before "
+                                      "the fold no longer stands for its letters, so a name spelled with one is missed")
+def test_a_name_spelled_with_a_symbol_that_folds_to_its_letters_is_found(home):
+    """Round A4's verifier: U+3383 folds to "ma", so "\u3383risol Quintero" spells the name; it was found at 576cfce and
+    is missed now, since round A4 reads every symbol whose fold isn't one letter as a separator first."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    spelled = s.store("Thanks to \u3383risol Quintero for the call.")
+    s.store("Brand voice: plain and warm.")
+    s.close()
+    p = X.plan(PERSON)
+    assert [m["id"] for m in p.memories] == [spelled], X.describe(p)
+
+
 @pytest.mark.parametrize("sym", [0x337F, 0xFDFC, 0x1D15E], ids=lambda c: f"U+{c:04X}")
 def test_a_symbol_the_fold_makes_letters_of_in_wide_text_is_read_too(home, sym):
     """A wide reading turns each run of characters that can't stand in the name into one NUL (_noise). U+337F folds to

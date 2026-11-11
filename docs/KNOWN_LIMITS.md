@@ -237,6 +237,12 @@ Round A4 (2026-11-11) closed these, from round A3's verifier's report:
   look-alikes are, so a name written in them is still found ("ⓜⓐⓡⓘⓢⓞⓛ ⓠⓤⓘⓝⓣⓔⓡⓞ"). Between two parts, one of them
   reads as a letter there would: "Marisol Ⓐ Quintero" isn't the name, just as "Marisol A. Quintero" isn't (see the
   list below). The counts are for Unicode 15.0, the version in Python 3.12.
+  **What this costs, the other way** (round A4's verifier): 100 of the 435 fold to a run of letters ("№" "no", "™"
+  "tm", "℡" "tel", "㎈" "cal", "㎃" "ma"). A name spelled with one of them standing for its letters ("㎃risol
+  Quintero", "№ah" for "Noah") was found before round A4 and isn't now, not even as a near-match, and the byte check
+  misses it too, so a memory written that way is certified. It's as unlikely a way to write a name as round A3's
+  "Marisol ™ Quintero", which this closed; reading such a symbol both ways would close both, and is open. A strict
+  xfail test holds the case, so a fix shows.
 - **A SQL comment no longer hides a constraint.** The comparison of a rebuilt table's definition read a comment
   character by character. A table `CHECK` written after "-- note" started with "-", so a hand-added column named "-"
   made the `CHECK` look like the column's own, and base64 in it went unlisted (the same with "/" and "/* x */"). Only
