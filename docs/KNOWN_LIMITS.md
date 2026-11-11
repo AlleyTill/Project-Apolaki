@@ -307,7 +307,10 @@ Also:
   each reading is kept and folded (a profile of the dry run shows the time in the substitutions, normalize() and the
   searches over those readings). A run that mixes such characters with separators whose fold is only separators can't be
   crossed by a match (its NUL breaks it), so reading each such run as one NUL as well may win the time back; that needs
-  its own test that no match changes, and hasn't been done.
+  its own test that no match changes, and hasn't been done. Round A4 reads symbols before the fold, which adds one
+  substitution to each fold. On the same store and measure, but on a machine at load about 6 (so every figure is
+  higher than round A3's), the dry run took 15.0 s against 14.4 s for round A3's code, and the check's reading of the
+  rows 13.7 s against 12.4 s.
 - A vector index made by another version of sqlite-vec than the one the erase loads may have tables the erase doesn't
   expect. They are listed as not Apolaki's, and you check them like any other (they hold vectors).
 - The final byte-by-byte check of the database files reads UTF-8 only, and takes no markup or quoted-printable out.
@@ -367,6 +370,34 @@ link listing, the head comparison (round A2's survivor D2, killed by its new tes
 of the "+" view's bases and its three tag views, and round A2's survivor R6 (killed by the new "/" cases). One lives,
 and is equivalent: scan() not passing the tag views it already has to as_form, which then works them out again, with the
 same views and the same verdict. Round A2's verifier's attack file (52 tests) run against round A3's code: 51 pass; the
-one that fails is the name nested 17 times deep, a limit section 5 lists. The strict expected failures in
-`tests/test_red_team_probes.py` (KNOWN_WRONG) list the ethics checks' known wrong verdicts; one that starts passing
-fails the run, so that list stays true.
+one that fails is the name nested 17 times deep, a limit section 5 lists.
+
+Round A4's run had 47 mutants of the lines it changed. They ran from a git archive of 9a14855, each against the tests
+that cover its area, after a run of the unchanged archive passed every selection. 31 were killed on an assertion: the
+notice's licence text and its list, each step of reading symbols before the fold (in the full fold, the byte check's
+fold, the wide readings, the planes, the astral set, the one-letter exception), each part of reading SQL comments
+whole, the "+" view's tag views, the wiki entry names the check reads, and every line of the folders the dry run
+can't read. Four were caught only by an exception. In three of them, removing an emptied wiki folder was broken, and
+the test that expected the erase to succeed raised EraseIncomplete. The fourth (S11, punctuation only) emptied the
+class, so it couldn't compile. Twelve lived:
+- three are equivalent: a run of symbols read as one space or one space each; the 30 symbols that fold to white space
+  only, read as a space either way (none folds to nothing); and the class holding past-the-BMP characters as well,
+  which is only slower;
+- one was invalid: it reworded the comment on the Cherokee table but kept the pointer to the notice that the test
+  checks;
+- eight lacked a test: a block comment across lines, the reader's and the raw views of the "+" reading (each needs a
+  shape no other view reads: a comment with spaces, and two attributes that exist only once "+" and "%3D" are read),
+  the wiki folder itself (never removed), the folder list in the code, the erase with no database, the command line's
+  two counts, and the check's walk past a wiki folder it can't enter.
+0c68478 adds those tests and makes the three exception kills assertions. Re-run from its archive, each of the eleven
+is killed on an assertion, and so are W8 and two replacements: only So symbols for S11, and the notice's pointer
+removed for the invalid one. The result is 44 of 49 killed on an assertion, 3 equivalent and 2 replaced. Round A3's
+verifier's attack files at round A4's code: 44 of 48 pass, and one is skipped without sqlite-vec. The two separator
+sweeps fail only on the 472 one-letter look-alikes section 5 lists. The text/attribute split that section 4 lists
+fails too. So does the unreadable folder, because the test looks for it among the files that name the person, and
+the dry run lists it under its own heading with a check instead. Round A2's verifier's attack file: 51 of 52, as
+before.
+
+The strict expected failures in `tests/test_red_team_probes.py` (KNOWN_WRONG) list the ethics checks' known wrong
+verdicts; one that starts passing fails the run, so that list stays true. The intake screen's known miss (the
+text/attribute split, section 4) is a strict expected failure in `tests/test_garuda_intake.py` the same way.
