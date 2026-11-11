@@ -1975,6 +1975,7 @@ def test_cherokee_hu_is_read_as_the_gamma_it_looks_like_not_as_r():
 
 # confusables.txt (UTS #39, 18.0.0, 2026-08-06), the prototype of each Cherokee letter the erase reads as a look-alike:
 # the test's own copy, so a wrong entry in erase._SKELETON fails here (round A's mutant D10, q read as x, lived).
+# (c) Unicode, Inc., under the Unicode License v3: see THIRD_PARTY_NOTICES.md.
 CHEROKEE_CONFUSABLES = {
     0x13A0: 0x0044, 0x13A1: 0x0052, 0x13A2: 0x0054, 0x13A5: 0x0069, 0x13A9: 0x0059, 0x13AA: 0x0041, 0x13AB: 0x004A,
     0x13AC: 0x0045, 0x13B1: 0x0393, 0x13B3: 0x0057, 0x13B7: 0x004D, 0x13BB: 0x0048, 0x13BD: 0x0059, 0x13C0: 0x0047,

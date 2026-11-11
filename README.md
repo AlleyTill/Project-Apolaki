@@ -177,6 +177,11 @@ brief -> BDI intention -> content-creation chip
 [Hippocratic License 3.0](LICENSE.md) with Liberation Labs' modules, plus the
 [commercial use addendum](LICENSE-COMMERCIAL-ADDENDUM.md).
 
+The erase's table of Cherokee look-alike letters, and a test's copy of it, come from Unicode's `confusables.txt`.
+They are © Unicode, Inc., under the Unicode License v3. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) holds that
+licence's full text. It also names exactly what in Apolaki is derived from Unicode data, and says where each of the
+other look-alike tables came from.
+
 ## Team
 
 Built by Liberation Labs. The working agent's design owes a great deal to Vera's audit of it in September 2026.

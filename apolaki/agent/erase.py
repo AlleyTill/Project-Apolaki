@@ -288,7 +288,8 @@ def _variants(text: str) -> tuple[str, ...]:
 # ("\u1d0d\u1d00\u0280\u026as\u1d0f\u029f" reads "MARISOL"), and the Cherokee letters that Unicode's confusables list
 # maps to a Latin letter ("\u13b7arisol"), and one it maps to Greek capital gamma (\u13b1, read as gamma as the fold
 # leaves it; round A had it as r). The Cherokee pairs are from confusables.txt (UTS #39, version 18.0.0,
-# 2026-08-06; (c) Unicode, Inc., under the Unicode License, https://www.unicode.org/license.txt). The small capitals are
+# 2026-08-06), (c) Unicode, Inc., under the Unicode License v3: THIRD_PARTY_NOTICES.md holds its text and names
+# everything in Apolaki derived from Unicode data. The small capitals are
 # taken by their names, not from that list, which maps small capital M to a turned w. Each key is as the fold leaves
 # it: after case folding, a Cherokee small letter is its capital. Latin letters of living orthographies that the list
 # also maps to an ASCII letter (Icelandic thorn, Ewe f, gamma and v with hook, Kabiye iota, the click letters) are left
