@@ -2209,11 +2209,13 @@ COMMENT_COLUMNS = [
     ('"-- note"', "-- note\n"),                   # a column named like the comment itself
     ('"/* x */"', "/* x */ "),
     ('"--"', "--\n"),
+    ('"/"', "/* x,\n (y */ "),                  # a block comment across lines (mutant C3: re.S dropped)
 ]
 
 
 @pytest.mark.parametrize("column,comment", COMMENT_COLUMNS, ids=["dash", "slash", "named like the line comment",
-                                                                 "named like the block comment", "bare dashes"])
+                                                                 "named like the block comment", "bare dashes",
+                                                                 "across lines"])
 def test_a_comment_before_a_table_check_doesnt_hide_it(home, column, comment):
     from apolaki.agent import erase as X
     own_schema_with(home, ms.SCHEMA.replace("    archive_reason TEXT\n",
@@ -2234,6 +2236,7 @@ def test_sql_comments_are_whole_tokens():
         ["a", "-- b (c, d", "e", "/* f, (g */", "h", "/* open ("]
     assert X._SQL_TOKEN.findall("\"-- x\" '/* y' [--] `/*`") == ['"-- x"', "'/* y'", "[--]", "`/*`"]
     assert X._SQL_TOKEN.findall("a - b / c") == ["a", "-", "b", "/", "c"]
+    assert X._SQL_TOKEN.findall("a /* b,\n (c */ d") == ["a", "/* b,\n (c */", "d"]
     assert X._definition("CREATE TABLE t (a TEXT -- one (, two\n, b TEXT)")[1] == \
         frozenset({("a", "TEXT", "-- one (, two"), ("b", "TEXT")})
     assert not X._column_item(("-- note", "CHECK", "(", "x", ")"), {"-- note"})
@@ -2504,7 +2507,10 @@ def test_a_wiki_folder_the_erase_empties_is_removed(home):
     (home / "wiki" / "empty-before").mkdir()
     p = X.plan(PERSON)
     assert "folder Marisol Quintero: removed, since the files above leave it empty" in X.describe(p), X.describe(p)
-    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    try:
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    except X.EraseIncomplete as e:
+        pytest.fail(f"the erase left something: {e}")
     assert not (home / "wiki" / "Marisol Quintero").exists()
     assert not (home / "wiki" / "people" / "Marisol Quintero").exists()
     assert (home / "wiki" / "people" / "dev_okafor_notes.md").is_file()                 # a folder with something left
@@ -2634,3 +2640,86 @@ def test_an_unreadable_folder_changes_the_code(home):
         assert X.plan(PERSON).code != code
     finally:
         locked.chmod(0o700)
+
+
+# Round A4's mutation run: tests for the mutants that lived (W3, W7, W9, U10, U11).
+def test_the_wiki_folder_itself_stays_when_the_erase_removes_everything_in_it(home):
+    """W3: the folders the erase removes are under the wiki, never the wiki folder itself."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    s.store("Marisol Quintero leads the tenant union.", memory_type="observation")
+    kept = s.store("Brand voice: plain and warm.")
+    assert s.generate_wiki_page("Marisol Quintero")
+    s.close()
+    assert [f.name for f in (home / "wiki").iterdir()] == ["marisol_quintero.md"], "the setup lost its point"
+    p = X.plan(PERSON)
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert (home / "wiki").is_dir() and [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+
+
+def test_a_file_added_to_a_folder_the_erase_would_empty_changes_the_code(home):
+    """W7: the dry run says a wiki folder goes; if it won't (something was added to it), the old code must not pass."""
+    from apolaki.agent import erase as X
+    plant(home)
+    (home / "wiki" / "drafts").mkdir()                    # a folder whose name doesn't name her, so a file added to it
+    (home / "wiki" / "drafts" / "marisol_quintero_draft.md").write_text("Draft.")       # changes no other listing
+    p = X.plan(PERSON)
+    assert "folder drafts: removed, since the files above leave it empty" in X.describe(p), X.describe(p)
+    (home / "wiki" / "drafts" / "agenda.md").write_text("Agenda for the spring appeal.")
+    assert [f["file"] for f in X.plan(PERSON).wiki_files] == [f["file"] for f in p.wiki_files], "the setup lost its point"
+    with pytest.raises(X.EraseError, match="isn't this erase's"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert not (home / "erasures.jsonl").exists()
+
+
+def test_a_wiki_folder_the_erase_empties_is_removed_with_no_database(home):
+    """W9: with no database the erase still removes the wiki files the dry run lists, and the folders they leave."""
+    from apolaki.agent import erase as X
+    (home / "wiki" / "Marisol Quintero").mkdir(parents=True)
+    (home / "wiki" / "Marisol Quintero" / "notes.md").write_text("Notes.")
+    p = X.plan(PERSON)
+    assert [f["file"] for f in p.wiki_files] == ["Marisol Quintero/notes.md"], X.describe(p)
+    try:
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    except X.EraseIncomplete as e:
+        pytest.fail(f"the erase left something: {e}")
+    assert not (home / "wiki" / "Marisol Quintero").exists() and (home / "wiki").is_dir()
+
+
+def test_the_command_line_counts_hand_added_things_and_folders_apart(home, capsys):
+    """U10: one hand-added index and one folder the dry run can't read are two different counts."""
+    import apolaki.engine as E
+    from apolaki.agent import erase as X
+    plant(home)
+    hand_add(home, "CREATE INDEX hx ON memories(memory_type)")
+    locked = _locked(home, "exports/locked", 0o000)
+    try:
+        p = X.plan(PERSON)
+        assert p.checks() == ["index:hx", "folder:exports/locked"], X.describe(p)
+        args = ["erase-person", PERSON, "--confirm", p.code, "--by", "x", "--reason", "asked"]
+        assert E.main(args + [a for t in p.checks() for a in ("--checked", t)]) == 0
+    finally:
+        locked.chmod(0o700)
+    assert "1 hand-added table(s), column(s), index(es), view(s), trigger(s) or definition(s) checked by a person; " \
+           "1 folder(s) the dry run couldn't read checked by a person" in capsys.readouterr().out
+
+
+def test_a_checked_wiki_folder_that_cant_be_entered_doesnt_stop_the_check(home):
+    """U11: the check after the erase walks the wiki; a folder there that can be listed but not entered, which a person
+    checked, must not stop it with a Python error after the rows are gone (no record would be written)."""
+    from apolaki.agent import erase as X
+    plant(home)
+    locked = home / "wiki" / "locked"
+    locked.mkdir()
+    (locked / "notes.md").write_text("Harbor Hall hosts the gala.")       # nothing here names her
+    locked.chmod(0o400)
+    try:
+        p = X.plan(PERSON)
+        assert p.checks() == ["folder:wiki/locked"], X.describe(p)
+        try:
+            X.erase(PERSON, confirm=p.code, by="x", reason="asked", checked=tuple(p.checks()))
+        except OSError as e:
+            pytest.fail(f"the check stopped with a Python error: {e!r}")
+    finally:
+        locked.chmod(0o700)
+    assert json.loads((home / "erasures.jsonl").read_text())["verified"] is True
