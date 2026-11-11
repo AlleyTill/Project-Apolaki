@@ -50,8 +50,13 @@ characters don't matter; the parts of a name may be joined by white space, by an
 punctuation or a symbol (hyphens and dashes, apostrophes, full stops, underscores, markup characters such as `*`, `[`,
 `(` and `/`, commas, semicolons, colons, middle dots, bullets, `&`, `@`, a raised dot, a broken bar, an emoji), or by
 nothing ("Jean-Luc Moreau" also finds "Jean Luc Moreau", "JeanLuc Moreau" and "jean_luc_moreau"; "Marisol Quintero"
-finds "**Marisol** Quintero", "Marisol/Quintero", "Marisol,Quintero" and "Marisol@Quintero"); escaped text is read
-decoded (the store writes tags as JSON, so "L\u00f3pez" on disk is "López"), markup is read taken out (a Markdown link
+finds "**Marisol** Quintero", "Marisol/Quintero", "Marisol,Quintero" and "Marisol@Quintero"). A symbol is read that way
+before accents and look-alikes are folded, so "Marisol™Quintero" is the name too. The exceptions are the 472 symbols
+that are a look-alike of one letter, such as a circled or squared letter ("Ⓐ") or a Kangxi radical: each is read as
+that letter, so a name written in circled letters is found, but one between the parts reads as a letter there would.
+A middle name or initial between the parts ("Marisol Elena Quintero") isn't found, so give that form as an alias.
+Escaped text is read decoded (the store writes tags as JSON, so "L\u00f3pez" on disk is "López"), markup is read
+taken out (a Markdown link
 "[Marisol](url) Quintero", HTML tags and entities, percent-encoding, the last two decoded until nothing changes, so
 "&amp;oacute;" is read as "ó"), and quoted-printable is read decoded ("L=C3=B3pez", soft line breaks included). A blob
 (binary data in a column) is read as text too, in Latin-1, UTF-16 and UTF-32, either byte order, with a byte-order mark

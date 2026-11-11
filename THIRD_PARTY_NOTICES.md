@@ -39,8 +39,8 @@ Listed here as well, to be safe:
   So the tables aren't a copy of that file. Whether any part of them was written from it can't be shown either way.
 - **What is built at run time.** These come from the copy of the Unicode Character Database inside the Python that
   runs Apolaki: the erase's separator class (`_sep`), its classes of format characters and combining marks
-  (`_byte_fold_strip`) and its noise class (`_noise`), and normalize()'s compatibility decomposition and category
-  tests. No file in this repository holds any of it.
+  (`_byte_fold_strip`), its noise class (`_noise`) and its class of symbols read as separators (`_symbol_seps`), and
+  normalize()'s compatibility decomposition and category tests. No file in this repository holds any of it.
 - **The code-point ranges written in `erase.py`** (`_NO_SPACE`, the scripts written without spaces, and `_ARABIC`) are
   ranges of Unicode blocks. No source is recorded for them. They aren't look-alike tables.
 

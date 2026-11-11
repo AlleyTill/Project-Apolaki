@@ -22,7 +22,15 @@ What counts as the name, for the name and each alias:
     between two parts: "Jean-Luc Moreau" finds "Jean Luc Moreau", "Jean–Luc Moreau" (an en dash), "JeanLuc Moreau",
     "jean_luc_moreau" (a wiki file name) and "jean.luc.moreau"; "O'Brien" finds "OBrien" and "O Brien"; "Marisol
     Quintero" finds "**Marisol** Quintero", "Marisol/Quintero", "Marisol,Quintero" (a CSV row), "Marisol\u00b7Quintero",
-    "Marisol\u2e33Quintero" (a raised dot), "Marisol\u00a6Quintero" (a broken bar) and "Marisol@Quintero";
+    "Marisol\u2e33Quintero" (a raised dot), "Marisol\u00a6Quintero" (a broken bar) and "Marisol@Quintero". Since
+    round A4 that holds for the characters as the text is read: round A3 applied the class after the compatibility
+    fold, which made letters of 907 of them ("\u2122" is "tm", "\u2103" "\u00b0c", "\u2116" "no", "\u249c" "(a)"), so
+    "Marisol \u2122 Quintero" was missed entirely. Those are read as separators before the fold now (_symbol_seps),
+    apart from 472 that are look-alikes of one letter (the circled and squared Latin letters, the Kangxi and CJK
+    radicals, the circled and squared katakana, Hangul and ideographs, the ideographic annotation marks), each read as
+    its letter, so a name written in them is found ("\u24dc\u24d0\u24e1\u24d8\u24e2\u24de\u24db"), and between two
+    parts one reads as a letter does there: "Marisol \u24b6 Quintero", like "Marisol A. Quintero", isn't the name (a
+    middle name or initial isn't, below);
   - a match must not touch a letter or a digit of a script written with spaces before it, nor such a letter after it.
     A digit after the name is still the name ("marisol.quintero85@...", "@MarisolQuintero1990"). A character of a
     script written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Myanmar, Tibetan, Yi) or of Korean, whose
@@ -104,7 +112,8 @@ someone else (where it is), never the name.
 
 What it can't do:
   - find the person by anything but the name and aliases given. A nickname, initials, a pronoun, a role ("our board
-    chair"), a misspelling or the parts in another order ("Quintero, Marisol") isn't found; list such variants as
+    chair"), a misspelling, the parts in another order ("Quintero, Marisol") or a middle name or initial between them
+    ("Marisol Elena Quintero", "Marisol A. Quintero": not even a near-match) isn't found; list such variants as
     aliases, and read what each finds in the dry run. The byte check of the database files doesn't take markup out,
     nor read UTF-16 or UTF-32 (the rows are read with markup taken out, and in both). See docs/KNOWN_LIMITS.md
     section 5.
@@ -304,12 +313,18 @@ _SKELETON = str.maketrans(
 
 
 def _fold(text: str) -> str:
-    """Text as the matcher reads it: apolaki.security.normalize, then case folded, then the look-alikes it leaves
-    (_SKELETON). For ASCII text normalize() changes only quote marks, so that is all this does there (the same result,
-    without its per-character Python loops)."""
+    """Text as the matcher reads it: the punctuation and symbols the compatibility fold would make letters of read as
+    separators first (_symbols_out, round A4), then apolaki.security.normalize, then case folded, then the look-alikes
+    it leaves (_SKELETON). For ASCII text normalize() changes only quote marks, so that is all this does there (the
+    same result, without its per-character Python loops)."""
     text = text or ""
-    folded = text.translate(_QUOTES).casefold() if text.isascii() else normalize(text).casefold().translate(_SKELETON)
+    folded = text.translate(_QUOTES).casefold() if text.isascii() else _letter_fold(_symbols_out(text))
     return " ".join(folded.split())
+
+
+def _letter_fold(text: str) -> str:
+    """normalize(), case folded, then _SKELETON: _fold without its first step (_symbol_seps reads symbols so)."""
+    return normalize(text).casefold().translate(_SKELETON)
 
 
 # For the byte-level check of the database files, whose float vectors decode to megabytes of non-ASCII noise:
@@ -368,7 +383,7 @@ _skeleton = _swap(_SKELETON)
 
 def _fold_fast(text: str) -> str:
     invisible, marks, far = _byte_fold_strip()
-    t = _straighten(invisible.sub("", _untag(text)))
+    t = _straighten(invisible.sub("", _untag(_symbols_out(text))))
     t = _unlook(far(marks.sub("", unicodedata.normalize("NFKD", t))))
     return _skeleton(_straighten(unicodedata.normalize("NFC", t)).casefold())
 
@@ -408,6 +423,9 @@ def _byte_texts(raw: bytes) -> list[str]:
 # (planes 2 and 3 are ideographs, 14 tags and variation selectors, 15 and 16 private use). The class is written with
 # escapes, so a pattern built from it holds none of its characters (_noise reads a pattern's characters), and built on
 # first use (scanning the planes' categories takes about a fifth of a second), since only the erase needs it.
+# Since round A4 the class is true of the text as the matcher reads it: round A3 applied it after the compatibility
+# fold, which makes letters, digits or ideographs of 907 of these characters (_symbol_seps), so "Marisol \u2122
+# Quintero" was missed entirely (round A3's verifier).
 @functools.lru_cache(maxsize=1)
 def _sep() -> str:
     """The separator class (above), as regular-expression source."""
@@ -427,6 +445,40 @@ def _sep() -> str:
 def _split() -> re.Pattern:
     """A run of separators (_sep), to split a name into its parts."""
     return re.compile(_sep() + "+")
+
+
+@functools.lru_cache(maxsize=1)
+def _symbol_seps() -> tuple[re.Pattern, frozenset]:
+    """The punctuation and symbol characters (planes 0 and 1) that the fold would make something other than separators
+    or one letter: "\u2122" is "tm", "\u2103" "\u00b0c", "\u2116" "no", "\u249c" "(a)", "\u337f" four ideographs, and
+    13 musical symbols keep a combining stem (435 characters under Python 3.12's Unicode 15.0). _symbols_out reads
+    each as a space before the fold, in the full fold (_fold) and the byte check's (_fold_fast) alike, so each separates
+    two parts of a name as _sep says (round A4). A symbol the fold makes one letter of is a look-alike of that letter
+    (the circled and squared Latin letters, the Kangxi and CJK radicals, the circled and squared katakana, Hangul and
+    ideographs, the ideographic annotation marks: 472) and is read as the letter, as the other look-alikes are, so a
+    name written in them is still found ("\u24dc\u24d0\u24e1\u24d8\u24e2\u24de\u24db"); between two parts it reads as
+    a letter does there (docs/KNOWN_LIMITS.md section 5). (a class of those in the Basic Multilingual Plane, a bitmap
+    the regex engine tests in one step, and the set of those past it.)"""
+    sep = re.compile(_sep() + "+")
+    near, far = [], set()
+    for c, cat in enumerate(map(unicodedata.category, map(chr, range(0x20000)))):
+        if cat[0] not in "PS":
+            continue
+        f = " ".join(_letter_fold(chr(c)).split())
+        if not f or sep.fullmatch(f) or (len(f) == 1 and f.isalnum()):
+            continue                         # a separator already, nothing, or a look-alike of one letter
+        if c <= 0xFFFF:
+            near.append(c)
+        else:
+            far.add(chr(c))
+    return re.compile(_class_of(near).pattern + "+"), frozenset(far)
+
+
+def _symbols_out(text: str) -> str:
+    """The text with each character of _symbol_seps read as a space."""
+    near, far = _symbol_seps()
+    t = near.sub(" ", text)
+    return _ASTRAL.sub(lambda m: " " if m.group() in far else m.group(), t) if far and _ASTRAL.search(t) else t
 # Scripts written without spaces between words (Chinese, Japanese, Thai, Lao, Khmer, Myanmar, Tibetan, Yi), and
 # Korean, whose particles and honorifics attach to a name: a name written in one has no word edge to keep, and a
 # character of one next to a name in another script is a separator ("Quintero\u3055\u3093").

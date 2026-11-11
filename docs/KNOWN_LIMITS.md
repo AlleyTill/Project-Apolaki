@@ -208,11 +208,25 @@ Round A3 (2026-11-09) closed what round A2's verifier found:
   between a name's parts one by one, and each verifier found more that a name could be written with and the erase
   missed entirely, not even as a near-match (round A2's: the raised dot, the runic single punctuation, the Ethiopic
   wordspace, the broken bar, the Z notation spot). Every character Unicode counts as punctuation or a symbol now
-  separates two parts, so "Marisol@Quintero", "Marisol!Quintero" and a name with an emoji between its parts are read as
-  the name too, the safe way: the dry run lists each, and a memory matched so goes whole.
+  separates two parts as it is typed, so "Marisol@Quintero", "Marisol!Quintero" and a name with an emoji between its
+  parts are read as the name too, the safe way: the dry run lists each, and a memory matched so goes whole. (That
+  wasn't yet true of 907 of them as the erase read them; round A4, below.)
 - **An empty folder or a link named for the person** is listed in the dry run, as a file so named is ("exports/Marisol
   Quintero (an empty folder, ...)", a link that leads to no file, a link to a folder, which the dry run doesn't
   follow), the wiki's folder included. Before, only files were walked. None of them is changed.
+
+Round A4 (2026-11-11) closed these, from round A3's verifier's report:
+
+- **A symbol the fold made letters of.** Round A3's separators were read after the compatibility fold, and the fold
+  turns 907 punctuation and symbol characters into letters, digits or ideographs: "™" becomes "tm", "℃" "°c", "№"
+  "no", "⒜" "(a)" and "㍿" four ideographs. Thirteen musical symbols kept a stem that broke the name. So "Marisol ™
+  Quintero" was missed entirely, not even as a near-match, and a memory written so was certified. The dry run and the
+  byte check now both read 435 of these as separators before the fold. The other 472 are look-alikes of one letter:
+  the circled and squared Latin letters ("Ⓐ", "🄰"), the Kangxi and CJK radicals, the circled and squared katakana,
+  Hangul and ideographs, and the ideographic annotation marks. Each of those is read as its letter, as other
+  look-alikes are, so a name written in them is still found ("ⓜⓐⓡⓘⓢⓞⓛ ⓠⓤⓘⓝⓣⓔⓡⓞ"). Between two parts, one of them
+  reads as a letter there would: "Marisol Ⓐ Quintero" isn't the name, just as "Marisol A. Quintero" isn't (see the
+  list below). The counts are for Unicode 15.0, the version in Python 3.12.
 
 It can still report success while the person is still there, in Apolaki's own tables, in a form it doesn't read:
 
@@ -228,10 +242,13 @@ It can still report success while the person is still there, in Apolaki's own ta
 - once you have named it with `--checked`, what an index added by hand holds in a form the byte check doesn't
   read (base64, markup, another encoding): the index isn't Apolaki's, and the dry run doesn't read its values, so this
   rests on your check, as what a hand-added table holds does;
-- nicknames, initials, a role ("our board chair"), a misspelling, or the parts in another order ("Quintero, Marisol").
+- nicknames, initials, a role ("our board chair"), a misspelling, or the parts in another order ("Quintero, Marisol");
+- a middle name or initial between the parts: "Marisol Elena Quintero", "Marisol A. Quintero", or a look-alike letter
+  such as "Ⓐ" there. These are missed entirely, not even listed as a near-match.
 
-What to do: before erasing, list every form you know as an alias (`--alias`), including other grammatical cases of the
-name in languages that inflect names, and the name in "Last, First" order. Read the dry run's list of what it found.
+What to do: before erasing, list every form you know as an alias (`--alias`). Include other grammatical cases of the
+name in languages that inflect names, the name in "Last, First" order, and the name with any middle name or initial.
+Read the dry run's list of what it found.
 
 Also:
 

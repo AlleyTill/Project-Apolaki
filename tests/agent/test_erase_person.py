@@ -2270,6 +2270,118 @@ def test_the_separator_class_is_every_punctuation_and_symbol_character_and_white
     assert X._sep().isascii()
 
 
+# Round A4, item 2: round A3's separator class was applied after the compatibility fold, which makes letters, digits or
+# ideographs of 907 punctuation and symbol characters ("\u2122" is "tm"), so "Marisol \u2122 Quintero" was missed
+# entirely (round A3's verifier's sweep). Each is read as a separator before the fold now, except a look-alike of one
+# letter, read as that letter. The test's own rule for those: compatibility decomposition, marks dropped, recomposed,
+# case folded, one letter or digit.
+def _one_letter_look_alike(ch: str) -> bool:
+    import unicodedata
+    f = unicodedata.normalize("NFC", "".join(c for c in unicodedata.normalize("NFKD", ch)
+                                             if unicodedata.category(c) not in ("Mn", "Me"))).casefold()
+    return len(f) == 1 and f.isalnum()
+
+
+def test_every_punctuation_or_symbol_between_the_parts_is_read_as_the_matcher_reads_it():
+    """Each P/S character of planes 0 and 1 between the parts, in text (with and without spaces), in a UTF-16 blob,
+    and in the byte check's fold: the name, unless the character is a look-alike of one letter (then in none)."""
+    import unicodedata
+    from apolaki.agent import erase as X
+    hit = X._matcher([PERSON])
+    letters, missed = [], {"text": [], "spaced": [], "utf-16": [], "bytes": []}
+    for c in range(0x20000):
+        ch = chr(c)
+        if unicodedata.category(ch)[0] not in "PS":
+            continue
+        found = {"text": X._names_in(hit, f"Note: Marisol{ch}Quintero called."),
+                 "spaced": X._names_in(hit, f"Note: Marisol {ch} Quintero called."),
+                 "utf-16": any(X._names_in(hit, t)
+                               for t in X._wide_texts(f"x Marisol{ch}Quintero y".encode("utf-16-le"))),
+                 "bytes": any(hit.search(t) for t in X._byte_texts(f"x Marisol{ch}Quintero y".encode()))}
+        if _one_letter_look_alike(ch):
+            letters.append(c)
+            assert not any(found.values()), (hex(c), found)   # read as a letter: "Marisol A Quintero" isn't the name
+        else:
+            for k, v in found.items():
+                if not v:
+                    missed[k].append(f"U+{c:04X}")
+    assert missed == {"text": [], "spaced": [], "utf-16": [], "bytes": []}, {k: v[:20] for k, v in missed.items()}
+    assert len(letters) == 472                     # the number the docs give (Python 3.12, Unicode 15.0)
+    assert {0x24B6, 0x24D0, 0x1F130, 0x2F08, 0x32D0, 0x328A, 0x3260, 0x326E, 0x3196} <= set(letters)
+
+
+@pytest.mark.parametrize("sym", [0x2122, 0x2103, 0x2116, 0x249C, 0x337F, 0x20A8, 0xFDFC, 0x1D15E, 0x1F12A],
+                         ids=lambda c: f"U+{c:04X}")
+def test_a_symbol_the_fold_makes_letters_of_between_the_parts_is_found_and_erased(home, sym):
+    """Through store(): "Marisol \u2122 Quintero" was missed at round A3, not even listed as a near-match, and the erase
+    certified a memory that still named her."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    spaced = s.store(f"Thanks to Marisol {chr(sym)} Quintero for the call.")
+    joined = s.store(f"Note: Marisol{chr(sym)}Quintero called about the appeal.")
+    kept = s.store("Brand voice: plain and warm.")
+    s.close()
+    p = X.plan(PERSON)
+    assert sorted(m["id"] for m in p.memories) == sorted([spaced, joined]) and p.near == [], X.describe(p)
+    out = X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+    assert json.loads((home / "erasures.jsonl").read_text())["verified"] is True and out["counts"]["memories"] == 2
+
+
+@pytest.mark.parametrize("sym", [0x337F, 0xFDFC, 0x1D15E], ids=lambda c: f"U+{c:04X}")
+def test_a_symbol_the_fold_makes_letters_of_in_wide_text_is_read_too(home, sym):
+    """A wide reading turns each run of characters that can't stand in the name into one NUL (_noise). U+337F folds to
+    four ideographs and U+FDFC to four Arabic letters, which share nothing with the name, so round A3 read each as noise
+    and missed the name; read as a separator first, each is one. (Not U+2122: in UTF-16 its bytes are '"!' as UTF-8,
+    two separators, so the plain reading found the name there before round A4.)"""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    kept = s.store("Unrelated note about the garden.")
+    other = s.store("Brand voice: plain and warm.")
+    s.close()
+    hand_add(home, "UPDATE memories SET source = ? WHERE id = ?",
+             params=((f"Marisol{chr(sym)}Quintero".encode("utf-16-le"), kept),))       # a blob, read wide
+    p = X.plan(PERSON)
+    assert [m["id"] for m in p.memories] == [kept] and p.unreadable == [], X.describe(p)
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [other]
+
+
+def test_the_byte_check_reads_a_symbol_between_the_parts_as_the_dry_run_does(home):
+    """The byte check's fold (_fold_fast) must read what the dry run's reads: an index whose expression writes
+    "Marisol\u2122Quintero" (as character codes, so its definition doesn't name her) holds it in every kept row's entry,
+    which only the byte check reads. Round A3's byte check missed it and recorded the erase verified."""
+    from apolaki.agent import erase as X
+    plant(home)
+    codes = ",".join(str(ord(c)) for c in "Marisol\u2122Quintero")
+    hand_add(home, f"CREATE INDEX hx ON memories(memory_type || char({codes}))")
+    p = X.plan(PERSON)
+    assert p.checks() == ["index:hx"] and p.schema == [], X.describe(p)
+    with pytest.raises(X.EraseIncomplete, match="the name"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked", checked=("index:hx",))
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is False
+
+
+@pytest.mark.parametrize("written", [
+    "\u24dc\u24d0\u24e1\u24d8\u24e2\u24de\u24db \u24e0\u24e4\u24d8\u24dd\u24e3\u24d4\u24e1\u24de",  # circled
+    "\U0001f13c\U0001f130\U0001f141\U0001f138\U0001f142\U0001f13e\U0001f13b \U0001f140\U0001f144\U0001f138\U0001f13d"
+    "\U0001f143\U0001f134\U0001f141\U0001f13e",                                                                # squared
+    "\u24c2arisol \u24c6uintero"])
+def test_a_name_written_in_look_alike_letter_symbols_is_still_found(home, written):
+    """A guard on round A4's exception: read every symbol as a separator before the fold and these, found since round
+    3 by the compatibility fold, would be missed."""
+    from apolaki.agent import erase as X
+    s = open_store(home)
+    mid = s.store(f"Shout-out to {written} for the mural.")
+    kept = s.store("Brand voice: plain and warm.")
+    s.close()
+    p = X.plan(PERSON)
+    assert [m["id"] for m in p.memories] == [mid], X.describe(p)
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert [r[0] for r in db_rows(home, "SELECT id FROM memories")] == [kept]
+
+
 # Item 2: an empty folder, a link that leads to no file, or a link to a folder, named for the person, wasn't listed:
 # only files were walked.
 def test_an_empty_folder_or_a_dangling_link_named_for_the_person_is_listed(home):
