@@ -44,3 +44,13 @@ def test_the_notice_names_each_derived_table():
     for name in ("`apolaki/agent/erase.py`, `_SKELETON`: the 29 Cherokee entries", "`CHEROKEE_CONFUSABLES`",
                  "the 24 small capitals", "`_LOOKALIKE_PAIRS`", "can't be shown"):
         assert name in text, name
+
+
+def test_the_notice_ships_in_every_built_package():
+    """A wheel carries only the license files pyproject names (hatchling's defaults match LICENSE* and NOTICE*, not
+    THIRD_PARTY_NOTICES.md), so without this line a pip install carries erase.py's Unicode-derived data without its
+    notice. Checked 2026-11-11 by building the wheel both ways with hatchling 1.33."""
+    import tomllib
+    meta = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert "THIRD_PARTY_NOTICES.md" in meta["project"].get("license-files", []), "the notice must be a license file"
+    assert any(r.replace(" ", "").startswith("hatchling>=1.27") for r in meta["build-system"]["requires"])
