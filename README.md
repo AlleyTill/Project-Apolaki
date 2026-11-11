@@ -95,7 +95,8 @@ The working agent (`apolaki.agent`) is the system Liberation Labs runs for its o
   erase. The name inside a longer word ("Quinterova") is a near-match: the dry run lists each one, and the erase refuses
   until a person rules it someone else (`--not-them`) or gives it as an alias. It certifies only Apolaki's own tables: a
   table, column, index, view or trigger its code didn't make, or one of its own whose definition says more than its
-  code writes, is listed, and the erase refuses until a person says they checked each (`--checked`). It finds people
+  code writes, is listed, and the erase refuses until a person says they checked each (`--checked`). So is a folder
+  under its home that it can't read, since that folder could hold files that name the person. It finds people
   by the names given, and it leaves records that aren't memory (the approval queue, grant files, the quarantine) for a
   person to handle, listing each place in them that names the person.
   [docs/DATA_LIFECYCLE.md](docs/DATA_LIFECYCLE.md) says what Apolaki keeps, about whom, for how long (until a person
@@ -142,7 +143,7 @@ python -m apolaki.intake list                             # outside text the scr
 python -m apolaki.engine erase-person "NAME"              # a dry run; then --confirm CODE --by WHO --reason WHY
                                                           # (and --not-them WORD for each near-match it lists,
                                                           # --checked THING for each table, column or index
-                                                          # it didn't make)
+                                                          # it didn't make, or folder it couldn't read)
 python -m apolaki.agent.agent                 # the interactive agent (/rule TEXT adds a house rule)
 python -m apolaki.agent.style_pass draft.md   # the judgement pass on a finished piece
 python -m apolaki.agent.fact_checker draft.md # the fact checker

@@ -12,7 +12,9 @@ reviews through (section 3 lists the honest copy that is blocked again), and clo
 cells. Round A (2026-11-07) changed only code that decodes or protects data, nothing in the ethics checks: the intake
 screen's decoding (section 4) and the erase (section 5), each section saying what it closed and what remains. Round
 A2 (2026-11-08) closed what round A's verifier found in the same two places, and round A3 (2026-11-09) what round A2's
-verifier found, each again with no change to the ethics checks. Everything else below is still open.
+verifier found, each again with no change to the ethics checks. Round A4 (2026-11-11) did the same for round A3's
+verifier's findings, and added a notice of the Unicode data Apolaki uses (THIRD_PARTY_NOTICES.md). Everything else below
+is still open.
 
 ## 1. The ethics checks: what still gets through
 
@@ -125,9 +127,17 @@ such a text about a tenth of a second.
 Since round A3 the "+" reading is also applied to what the other readings give with the tags taken out, so a tag or a
 comment between the "+"-joined words no longer hides them ("Ignore+<b></b>all+previous+instructions",
 "Ignore+<!-- x -->all+previous+instructions", "%2<b></b>B" for a "+", and "Ignore+all" and "previous+instructions" in
-two attributes of one tag), each let through before. It still misses:
+two attributes of one tag), each let through before.
+
+Since round A4 the other readings also read what the "+" reading gives. In "Ignore+all+<b+previous+instructions>" the
+tag's name took in the "+"-joined words, so the other readings dropped them with the tag; with "+" read as a space they
+are words inside the tag ("Ignore all <b previous instructions>"), which the words view reads. Such a text was let
+through before. It still misses:
 
 - a paraphrase, another language, or an instruction split across texts screened separately;
+- an instruction split between ordinary text and an attribute's value ("Ignore all <img alt='previous
+  instructions'>", with "+" for the spaces or without): the reader's view drops the attribute, the attribute view
+  reads the value alone, and no view puts the two halves together;
 - a Markdown link splitting the words, a backslash escape ("\u0069nstructions" for "instructions"), base64 or rot13,
   a tag left open anywhere but at the end of the text, and an instruction partly inside a <script> block;
 - a percent escape that isn't valid UTF-8 standing for the space ("Ignore%C0%A0all previous instructions"), and
@@ -227,6 +237,27 @@ Round A4 (2026-11-11) closed these, from round A3's verifier's report:
   look-alikes are, so a name written in them is still found ("ⓜⓐⓡⓘⓢⓞⓛ ⓠⓤⓘⓝⓣⓔⓡⓞ"). Between two parts, one of them
   reads as a letter there would: "Marisol Ⓐ Quintero" isn't the name, just as "Marisol A. Quintero" isn't (see the
   list below). The counts are for Unicode 15.0, the version in Python 3.12.
+- **A SQL comment no longer hides a constraint.** The comparison of a rebuilt table's definition read a comment
+  character by character. A table `CHECK` written after "-- note" started with "-", so a hand-added column named "-"
+  made the `CHECK` look like the column's own, and base64 in it went unlisted (the same with "/" and "/* x */"). Only
+  the column was listed. A comment is one token now, and a definition item that holds a comment always counts, so the
+  definition is listed too. That covers a column named like the comment itself ("-- note"), which reading comments
+  whole would have left open.
+- **A wiki folder named for the person no longer outlives the erase.** The erase removed the page inside
+  "wiki/Marisol Quintero/" and left the folder. Its check read only the wiki's file names, so it still recorded the
+  erase verified. The erase now removes each wiki folder its removals leave empty, and the dry run lists those
+  folders. The check after the erase reads the name of everything in the wiki, folders and links included. A wiki
+  folder or link named for the person that the erase didn't empty (one that was empty before, say) is left, and then
+  the erase reports itself incomplete. Remove such a folder or link by hand first; the dry run lists it.
+- **A folder the dry run can't read is listed, and needs your check.** A folder under `$APOLAKI_HOME` whose contents
+  can't be listed (mode 000) was skipped without a word, so a file named for the person inside it was never
+  mentioned, and the erase could report itself verified. A folder whose contents can be listed but not looked at
+  (read permission without search permission) stopped the dry run with a Python error. Any such folder, named for the
+  person or not, is now listed under its own heading, and the erase refuses until you have checked it by hand and
+  name it with `--checked folder:PATH` (for example `--checked folder:exports/locked`). The record keeps it with the
+  other checks (`checked_by_person`), with "[erased]" for a path that names the person. A file outside the wiki that
+  can't be read is still listed by name as "unreadable", and doesn't need a check. A file inside the wiki that can't
+  be read still stops the dry run with a Python error; that is still open.
 
 It can still report success while the person is still there, in Apolaki's own tables, in a form it doesn't read:
 

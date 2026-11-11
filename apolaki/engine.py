@@ -257,7 +257,9 @@ def main(argv=None) -> int:
                    help="a near-match the dry run listed that is someone else; repeat for each (needed for every one)")
     x.add_argument("--checked", action="append", default=[], metavar="THING",
                    help="a table, column, index, view, trigger or definition the dry run listed as not Apolaki's, "
-                        "which a person has checked by hand for the name; repeat for each (needed for every one)")
+                        "which a person has checked by hand for the name, or a folder it couldn't read "
+                        "(folder:PATH), checked for files that name the person; repeat for each (needed for every "
+                        "one)")
     a = ap.parse_args(argv)
     if a.cmd == "erase-person":
         from .agent import erase as X
@@ -273,11 +275,13 @@ def main(argv=None) -> int:
             print(f"ERASE INCOMPLETE: {e}" if incomplete else f"not erased: {e}", file=sys.stderr)
             return 1 if incomplete else 4 if isinstance(e, X.EraseUnreadable) else 2
         c = done["counts"]
+        tables = [t for t in done["checked"] if not t.startswith(X.FOLDER)]
         print(f"erased: {c['memories']} memories, {c['entities']} entities, {c['mentions']} mentions, "
               f"{c['triples']} triples, {c['wiki_pages']} wiki pages and {c['wiki_files']} wiki files touched, "
               f"{c['beliefs']} beliefs; checked every text column of every table, the database files byte for byte, "
-              f"the wiki and the belief files; verified for Apolaki's tables; {len(done['checked'])} hand-added "
+              f"the wiki and the belief files; verified for Apolaki's tables; {len(tables)} hand-added "
               f"table(s), column(s), index(es), view(s), trigger(s) or definition(s) checked by a person; "
+              f"{len(done['checked']) - len(tables)} folder(s) the dry run couldn't read checked by a person; "
               f"{done['near']} near-match(es) ruled "
               f"someone else and kept; recorded in {done['ledger']} without the name")
         if done["elsewhere"]:

@@ -23,7 +23,10 @@ Since round A2 a "+" is also read as a space, as a form's query string writes on
 raw text's (a tag can hide the nesting from the raw text); and the two expressions that read tags and attributes run in
 time linear in the text's length (a long run of letters in a tag took seconds before). Since round A3 the "+" is read
 as a space in what the tag views give too, so a tag or comment between "+"-joined words doesn't hide them
-("Ignore+<b></b>all+previous+instructions").
+("Ignore+<b></b>all+previous+instructions"); and since round A4 the tag views read what the "+" reading gives, so
+words a tag's name took in until "+" was read as a space are read too ("Ignore+all+<b+previous+instructions>"). An
+instruction split between the text and an attribute's value ("Ignore all <img alt='previous instructions'>") isn't read
+as one: no view puts the two halves together (docs/KNOWN_LIMITS.md section 4).
   - A hit quarantines the text for a person: $APOLAKI_HOME/quarantine/q_<sha256 prefix>.json holds the text, its
     sources, its kind, the patterns that fired and when it was seen. The same text seen again is the same entry
     (seen_count, sources), so a listing re-read every night doesn't raise a new alarm each time. Each event is a line
@@ -242,8 +245,9 @@ def as_form(text: str, unsettled: list | None = None, views: list[str] | None = 
 
 def scan(text: str) -> list[str]:
     """Garuda Layer 1's patterns that fire on the text, on its normalised form, or on what a reader of its HTML sees
-    (as_read), a model reading the raw HTML sees (as_raw, as_words) or a form's reader sees (as_form), each as it is and
-    normalised, in the order found; and UNSETTLED when any view's decoding doesn't settle within DECODE_PASSES."""
+    (as_read), a model reading the raw HTML sees (as_raw, as_words) or a form's reader sees (as_form), and on what the
+    first three make of the form's reading (round A4), each as it is and normalised, in the order found; and UNSETTLED
+    when any view's decoding doesn't settle within DECODE_PASSES."""
     if not text:
         return []
     # The raw scan is kept so the screen never rests on normalize() alone. No text is known that it catches and the
@@ -253,7 +257,12 @@ def scan(text: str) -> list[str]:
     flags = layer1(text)
     unsettled: list[str] = []
     tagged = as_read(text, unsettled) + as_raw(text, unsettled) + as_words(text, unsettled)
-    views = dict.fromkeys(tagged + as_form(text, unsettled, tagged))                  # each view once
+    form = as_form(text, unsettled, tagged)
+    # Round A4: the tag views read what the "+" view gives as well. In "Ignore+all+<b+previous+instructions>" the tag's
+    # name takes in the "+"-joined words, so the tag views of the text drop them with it; with "+" read as a space they
+    # are words inside the tag, which as_words keeps (round A3's verifier).
+    form += [v for f in form for v in as_read(f, unsettled) + as_words(f, unsettled) + as_raw(f, unsettled)]
+    views = dict.fromkeys(tagged + form)                                              # each view once
     for t in (normalize(text), *(v for seen in views for v in (seen, normalize(seen)))):
         flags += [p for p in layer1(t) if p not in flags]
     if unsettled:

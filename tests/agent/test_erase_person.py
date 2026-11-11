@@ -2199,6 +2199,60 @@ def test_an_item_is_a_columns_own_only_when_its_first_word_isnt_a_constraint_wor
     assert not empty
 
 
+# Round A4, item 3: a SQL comment was read character by character, so "-- note" before a table CHECK made the CHECK's
+# item start with "-", and a hand-added column named "-" hid the CHECK, with base64 of the name in it (round A3's
+# verifier). Comments are whole tokens now; and since a column may be named like a comment ("-- note", quoted), an
+# item with a comment in it is never a column's own.
+COMMENT_COLUMNS = [
+    ('"-"', "-- note\n"),                         # the verifier's two cases
+    ('"/"', "/* x */ "),
+    ('"-- note"', "-- note\n"),                   # a column named like the comment itself
+    ('"/* x */"', "/* x */ "),
+    ('"--"', "--\n"),
+]
+
+
+@pytest.mark.parametrize("column,comment", COMMENT_COLUMNS, ids=["dash", "slash", "named like the line comment",
+                                                                 "named like the block comment", "bare dashes"])
+def test_a_comment_before_a_table_check_doesnt_hide_it(home, column, comment):
+    from apolaki.agent import erase as X
+    own_schema_with(home, ms.SCHEMA.replace("    archive_reason TEXT\n",
+                                            f"    archive_reason TEXT,\n    {column} TEXT,\n    {comment}"
+                                            f"CHECK (memory_type != '{b64(PERSON)}')\n"))
+    plant(home)
+    sql = db_rows(home, "SELECT sql FROM sqlite_master WHERE name='memories'")[0][0]
+    assert comment.strip() in sql and b64(PERSON) in sql, "the setup lost its point"
+    assert X.plan(PERSON).checks() == [f"column:memories.{column[1:-1]}", "definition:memories"], \
+        X.describe(X.plan(PERSON))
+
+
+def test_sql_comments_are_whole_tokens():
+    """As SQLite reads them: "--" to the end of the line, "/*" to "*/" or to the end of the text; a "(" or "," inside
+    one is the comment's, never the definition's. A quoted name or a literal holding "--" or "/*" stays one token."""
+    from apolaki.agent import erase as X
+    assert X._SQL_TOKEN.findall("a -- b (c, d\ne /* f, (g */ h /* open (") == \
+        ["a", "-- b (c, d", "e", "/* f, (g */", "h", "/* open ("]
+    assert X._SQL_TOKEN.findall("\"-- x\" '/* y' [--] `/*`") == ['"-- x"', "'/* y'", "[--]", "`/*`"]
+    assert X._SQL_TOKEN.findall("a - b / c") == ["a", "-", "b", "/", "c"]
+    assert X._definition("CREATE TABLE t (a TEXT -- one (, two\n, b TEXT)")[1] == \
+        frozenset({("a", "TEXT", "-- one (, two"), ("b", "TEXT")})
+    assert not X._column_item(("-- note", "CHECK", "(", "x", ")"), {"-- note"})
+    for item in (("/* the note */", "note", "TEXT"), ("note", "TEXT", "-- trailing"), ("note", "/**/", "TEXT")):
+        assert not X._column_item(item, {"note"}), item
+    assert X._column_item(('"-- note"', "TEXT"), {"-- note"})          # the column named so is still its own
+
+
+def test_a_comment_in_a_hand_added_columns_own_definition_lists_the_definition_too(home):
+    """By round A2's design a hand-added column's own items don't count as a definition difference (the column is
+    listed); a comment in one is schema text that can hold anything, so the definition is listed too, as before round
+    A4 (a guard: base listed it as well, because the comment's characters made the item differ)."""
+    from apolaki.agent import erase as X
+    own_schema_with(home, ms.SCHEMA.replace("    archive_reason TEXT\n",
+                                            f"    archive_reason TEXT,\n    -- {b64(PERSON)}\n    note TEXT\n"))
+    plant(home)
+    assert X.plan(PERSON).checks() == ["column:memories.note", "definition:memories"]
+
+
 def test_a_column_named_like_a_constraint_word_with_no_constraint_is_listed_once(home):
     from apolaki.agent import erase as X
     plant(home)
@@ -2420,8 +2474,163 @@ def test_an_empty_folder_or_a_dangling_link_named_for_the_person_is_listed(home)
     assert "exports/Marisol Quintero (an empty folder, its name or a folder it is in naming them)" in text
     assert "grant-drafts/marisol_quintero_draft.md (a link that leads to no file, its name or a folder it is in " \
            "naming them)" in text
-    done = X.erase(PERSON, confirm=p.code, by="x", reason="asked")           # the locked folder is readable again,
-    erased = {path for path, _ in done["elsewhere"]}                         # so its file is listed in its place
+    assert p.checks() == ["folder:exports/marisol-quintero-locked"]         # round A4: and a person must check it
+    p = X.plan(PERSON)                                     # the locked folder is readable again: a new dry run, whose
+    erased = {path for path, _ in p.elsewhere}              # code differs, lists its file in its place
     assert erased >= set(expected) - {"exports/marisol-quintero-locked"} | {"exports/marisol-quintero-locked/notes.txt"}
+    assert p.checks() == []
+    # Round A4: the check after the erase reads every wiki entry's name, so the empty wiki folder named for her (which
+    # the erase didn't empty, and so leaves) makes the erase incomplete; before, it was recorded verified.
+    with pytest.raises(X.EraseIncomplete, match="wiki/Marisol Quintero: the name"):
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked")
     assert (home / "exports" / "Marisol Quintero").is_dir() and (home / "wiki" / "Marisol Quintero").is_dir()
     assert os.path.islink(home / "grant-drafts" / "marisol_quintero_draft.md")
+
+
+# Round A4, item 3: a wiki folder named for the person outlived the erase, and the erase recorded verified:true: the
+# erase removed the page inside and left the folder, and its check read only the wiki's file names (round A3's
+# verifier). The erase removes each wiki folder it empties, and its check reads the name of every wiki entry.
+def test_a_wiki_folder_the_erase_empties_is_removed(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    (home / "wiki" / "Marisol Quintero").mkdir()
+    (home / "wiki" / "Marisol Quintero" / "notes.md").write_text("Notes.")
+    (home / "wiki" / "people" / "Marisol Quintero" / "deeper").mkdir(parents=True)
+    (home / "wiki" / "people" / "Marisol Quintero" / "deeper" / "x.md").write_text("Notes.")
+    (home / "wiki" / "people" / "dev_okafor_notes.md").write_text("Dev Okafor runs the food bank.")
+    (home / "wiki" / "drafts").mkdir()
+    (home / "wiki" / "drafts" / "marisol_quintero_draft.md").write_text("Draft.")
+    (home / "wiki" / "drafts" / "harbor_hall_draft.md").write_text("Harbor Hall hosts the gala.")
+    (home / "wiki" / "empty-before").mkdir()
+    p = X.plan(PERSON)
+    assert "folder Marisol Quintero: removed, since the files above leave it empty" in X.describe(p), X.describe(p)
+    X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+    assert not (home / "wiki" / "Marisol Quintero").exists()
+    assert not (home / "wiki" / "people" / "Marisol Quintero").exists()
+    assert (home / "wiki" / "people" / "dev_okafor_notes.md").is_file()                 # a folder with something left
+    assert (home / "wiki" / "drafts" / "harbor_hall_draft.md").is_file()
+    assert (home / "wiki" / "empty-before").is_dir()                                       # empty before: not touched
+    [rec] = [json.loads(line) for line in (home / "erasures.jsonl").read_text().splitlines()]
+    assert rec["verified"] is True
+    assert p.wiki_folders == ["people/Marisol Quintero/deeper", "people/Marisol Quintero", "Marisol Quintero"]
+
+
+def test_a_wiki_folder_or_link_named_for_the_person_that_the_erase_leaves_makes_it_incomplete(home):
+    """One the erase didn't empty (empty before, or a link) stays; the check reads its name, so the erase isn't
+    verified. Before round A4 it read only the wiki's file names, and recorded such an erase verified."""
+    import os
+    from apolaki.agent import erase as X
+    for planted in ("folder", "link"):
+        target = home / "wiki" / "Marisol Quintero"
+        if planted == "folder":
+            plant(home)
+            target.mkdir()
+        else:
+            target.rmdir()
+            os.symlink(home / "nowhere", home / "wiki" / "marisol_quintero.link")
+        p = X.plan(PERSON)
+        assert "removed, since the files above leave it empty" not in X.describe(p)
+        with pytest.raises(X.EraseIncomplete, match="the name"):
+            X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+        rec = json.loads((home / "erasures.jsonl").read_text().splitlines()[-1])
+        assert rec["verified"] is False, planted
+    assert X.leftovers([PERSON], home) == [f"{home / 'wiki' / 'marisol_quintero.link'}: the name"]
+
+
+def test_the_check_reads_every_wiki_entrys_name_and_nothing_else_by_name(home):
+    from apolaki.agent import erase as X
+    (home / "wiki" / "Dev Okafor").mkdir(parents=True)
+    (home / "wiki" / "Dev Okafor" / "notes.md").write_text("Food bank.")
+    assert X.leftovers([PERSON], home) == []
+    (home / "wiki" / "Dev Okafor" / "Marisol-Quintero").mkdir()
+    assert X.leftovers([PERSON], home) == [f"{home / 'wiki' / 'Dev Okafor' / 'Marisol-Quintero'}: the name"]
+
+
+# Round A4, item 3: a folder under $APOLAKI_HOME that can't be read was skipped without a word, named for the person
+# or not (round A3's verifier: exports/locked, mode 000, holding marisol_quintero.txt); and one that can be listed but
+# not entered (mode r--) stopped the dry run with a Python error. Each is listed now, and the erase refuses until a
+# person has checked it and names it with --checked folder:PATH.
+def _locked(home, rel, mode):
+    d = home / rel
+    d.mkdir(parents=True)
+    (d / "marisol_quintero.txt").write_text("Marisol Quintero")
+    (d / "sub").mkdir()
+    d.chmod(mode)
+    return d
+
+
+@pytest.mark.parametrize("mode", [0o000, 0o400, 0o300], ids=["none", "read only", "no read"])
+def test_a_folder_that_cant_be_read_is_listed_and_the_erase_refuses_until_it_is_checked(home, mode, capsys):
+    import apolaki.engine as E
+    from apolaki.agent import erase as X
+    plant(home)
+    locked = _locked(home, "exports/locked", mode)
+    try:
+        try:
+            p = X.plan(PERSON)
+        except OSError as e:
+            pytest.fail(f"the dry run stopped with a Python error: {e!r}")
+        assert p.checks() == ["folder:exports/locked"], X.describe(p)
+        text = X.describe(p)
+        assert "Folders under $APOLAKI_HOME this dry run can't read (1)" in text
+        assert "exports/locked: --checked 'folder:exports/locked'" in text
+        before = snapshot(home)
+        with pytest.raises(X.EraseError, match="couldn't read 1 folder"):
+            X.erase(PERSON, confirm=p.code, by="x", reason="asked")
+        assert snapshot(home) == before and not (home / "erasures.jsonl").exists()
+        with pytest.raises(X.EraseError, match="didn't list as added by hand or as a folder"):
+            X.erase(PERSON, confirm=p.code, by="x", reason="asked", checked=("folder:exports/locked", "folder:x"))
+        args = ["erase-person", PERSON, "--confirm", p.code, "--by", "x", "--reason", "asked"]
+        assert E.main(args) == 2 and "couldn't read 1 folder" in capsys.readouterr().err
+        assert E.main(args + ["--checked", "folder:exports/locked"]) == 0
+        assert "0 hand-added table(s), column(s), index(es), view(s), trigger(s) or definition(s) checked by a " \
+               "person; 1 folder(s) the dry run couldn't read checked by a person" in capsys.readouterr().out
+    finally:
+        locked.chmod(0o700)
+    rec = json.loads((home / "erasures.jsonl").read_text())
+    assert rec["verified"] is True and rec["checked_by_person"] == ["folder:exports/locked"]
+    assert p.unread_folders == ["exports/locked"]
+
+
+def test_a_named_entry_in_a_folder_that_can_be_listed_but_not_entered_is_listed_by_name(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    locked = _locked(home, "exports/locked", 0o400)
+    wiki_locked = _locked(home, "wiki/locked", 0o400)
+    try:
+        try:
+            p = X.plan(PERSON)
+        except OSError as e:
+            pytest.fail(f"the dry run stopped with a Python error: {e!r}")
+    finally:
+        locked.chmod(0o700)
+        wiki_locked.chmod(0o700)
+    assert p.checks() == ["folder:exports/locked", "folder:wiki/locked"], X.describe(p)   # its "sub" isn't, again
+    assert p.named_entries == {"exports/locked/marisol_quintero.txt": "in a folder the dry run can't read",
+                               "wiki/locked/marisol_quintero.txt": "in a folder the dry run can't read"}
+
+
+def test_a_folder_named_for_the_person_that_cant_be_read_needs_a_check_and_the_record_doesnt_name_her(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    locked = _locked(home, "exports/Marisol Quintero", 0o000)
+    try:
+        p = X.plan(PERSON)
+        assert p.named_entries == {"exports/Marisol Quintero": "a folder that can't be read"}, X.describe(p)
+        assert p.checks() == ["folder:exports/Marisol Quintero"]
+        X.erase(PERSON, confirm=p.code, by="x", reason="asked", checked=tuple(p.checks()))
+    finally:
+        locked.chmod(0o700)
+    ledger = (home / "erasures.jsonl").read_text()
+    assert "marisol" not in ledger.lower() and json.loads(ledger)["checked_by_person"] == ["[erased]"]
+
+
+def test_an_unreadable_folder_changes_the_code(home):
+    from apolaki.agent import erase as X
+    plant(home)
+    code = X.plan(PERSON).code
+    locked = _locked(home, "exports/locked", 0o000)
+    try:
+        assert X.plan(PERSON).code != code
+    finally:
+        locked.chmod(0o700)

@@ -30,6 +30,7 @@ python -m apolaki.engine erase-person "NAME" --alias "OTHER FORM"        # a dry
 python -m apolaki.engine erase-person "NAME" --alias "OTHER FORM" --confirm CODE --by WHO --reason WHY
 python -m apolaki.engine erase-person "NAME" ... --not-them "WORD"         # once for each near-match, if any
 python -m apolaki.engine erase-person "NAME" ... --checked "table:NAME"    # once for each thing Apolaki didn't make
+python -m apolaki.engine erase-person "NAME" ... --checked "folder:PATH"   # and each folder the dry run can't read
 ```
 
 Stop the scheduled jobs and the MCP server first (docs/STOPPING.md): the erase needs the database to itself.
@@ -38,10 +39,10 @@ The dry run lists every memory (archived ones too), entity, graph row, wiki page
 person; each place in an approval-queue item, a grant draft or a grant hunt file that names them, with the text
 around it; and every other file in `$APOLAKI_HOME` the name appears in. The erase removes exactly what the dry run
 listed, if the code still matches: memories with their embeddings, the person's entities and the entities that came
-only from those memories, graph rows, wiki pages (pages that named the person are rebuilt without them), beliefs,
-and the name in the belief log. It rebuilds the vector indexes, compacts the database so no deleted bytes stay in
-it, then checks every text column of every table, the database files byte by byte, the wiki and the belief files, and
-runs a second dry run. A check that still finds the name, or a compaction or log truncation that failed, is an error
+only from those memories, graph rows, wiki pages (pages that named the person are rebuilt without them) and the wiki
+folders that leaves empty, beliefs, and the name in the belief log. It rebuilds the vector indexes, compacts the
+database so no deleted bytes stay in it, then checks every text column of every table, the database files byte by
+byte, the wiki (every file, and the name of everything in it) and the belief files, and runs a second dry run. A check that still finds the name, or a compaction or log truncation that failed, is an error
 (`ERASE INCOMPLETE`, recorded as not verified), never a success.
 
 What counts as the name: case, accents, the common look-alike letters (Cyrillic, Greek and Armenian ones that look
@@ -96,8 +97,12 @@ person", and the erasure record lists what the person named.
 What it leaves to a person: the records and files the dry run lists as not changed (approval-queue items, grant drafts,
 grant-hunt files, the quarantine, logs, backups), including a file whose name names the person, and an empty folder or a
 link (one that leads to no file, or to a folder) whose name does. They are records of what was drafted, reviewed or
-received, and are edited or deleted by hand. It finds the person only by the name and aliases given, so list nicknames
-and other spellings as aliases. A memory that names the person goes whole.
+received, and are edited or deleted by hand. A folder or a link in the wiki whose name names the person, and which the
+erase doesn't empty, stays, and the check then reports the erase incomplete: remove it by hand first. A folder under
+`$APOLAKI_HOME` that the dry run can't read (it can't list what the folder holds, or can't look at it) is listed
+whether or not its name names the person, since it could hold files that do. The erase refuses until a person has
+checked each such folder by hand and names it with `--checked "folder:PATH"`. It finds the person only by the name and
+aliases given, so list nicknames and other spellings as aliases. A memory that names the person goes whole.
 
 Who can erase: anyone who can run commands as the account that owns `$APOLAKI_HOME`. There is no erase over MCP,
 and nothing erases on Apolaki's own initiative.

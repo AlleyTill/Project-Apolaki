@@ -64,7 +64,8 @@ What it removes:
     mention row and triple that names them or touches them or an erased memory, and every other entity left with no
     memory behind it, since it came only from what was erased;
   - the person's wiki page, file and row; every other page that names them, or belongs to an erased entity, is
-    rebuilt from what remains or removed when nothing remains to rebuild it from;
+    rebuilt from what remains or removed when nothing remains to rebuild it from; and since round A4 each wiki folder
+    those removals leave empty (a folder named for the person outlived its page before);
   - the engine's beliefs that name the person, logged as removed without the name; and the person's name in the
     engine's belief log, replaced by "[erased]" wherever it is in a line (in lists and nested values too).
 The dry run reads every text column of every table in the database, and the schema (table, view, trigger and index
@@ -85,7 +86,8 @@ and a partial index's WHERE is schema text), every view and trigger, and every o
 whose definition says more than its code's (a default, a CHECK, an index's expression or WHERE: since round A2 they
 are compared by definition, not by name only) is listed in the dry run as not Apolaki's, whatever it holds, and the
 erase refuses until a person has checked each by hand and names each with --checked (exactly as the dry run prints
-it: "table:NAME", "column:TABLE.COLUMN", "index:NAME", "view:NAME", "trigger:NAME", "definition:NAME"): a table,
+it: "table:NAME", "column:TABLE.COLUMN", "index:NAME", "view:NAME", "trigger:NAME", "definition:NAME", and since
+round A4 "folder:PATH" for a folder the dry run can't read, below): a table,
 column, index or definition for the name in any form, a trigger for what it copies when the erase deletes rows (it
 fires then). The erase still reads those tables and columns, and refuses on a name it finds there; it doesn't read an
 index's values, and its byte check after the erase reads them only as the database file's bytes, so a kept row's index
@@ -100,7 +102,8 @@ are zeroed even if VACUUM can't run) and truncates its write-ahead log. Its chec
 table again; reads back every byte of the database files (folding case, accents, look-alike letters and invisible
 characters, decoding escapes, and looking for the erased embeddings), with no word edges, since the bytes around a
 column value are anything, and accepts a match there only where a near-match a person ruled someone else stands in a
-kept row, or by chance inside a kept vector; reads the wiki folder and the engine's belief files; and runs the dry run
+kept row, or by chance inside a kept vector; reads the wiki folder (every file, and since round A4 the name of every
+entry in it, a folder or a link too) and the engine's belief files; and runs the dry run
 again, which must find nothing to remove or refuse on and no near-match nobody ruled on. If the name or an erased
 embedding is still there, or VACUUM or the log truncation failed, that is an error (EraseIncomplete), never a success.
 
@@ -129,7 +132,12 @@ What it can't do:
     in, by name. Since round A2 a file whose name, or a folder it is in, names the person is listed too
     ("grant-drafts/marisol_quintero_memorial_draft.md"), and since round A3 an empty folder and a link that leads to
     no file (a dangling link, or a link to a folder) whose name names them, the wiki's included. A person deals with
-    each by hand. Copies outside $APOLAKI_HOME are beyond it.
+    each by hand. Copies outside $APOLAKI_HOME are beyond it. Since round A4 every folder under $APOLAKI_HOME the dry
+    run can't read (it can't list what the folder holds, or can't look at it; before, the first was skipped without a
+    word and the second stopped the dry run with a Python error), named for the person or not, is listed, and the erase
+    refuses until a person has checked it by hand for files that name them and names it with --checked
+    ("folder:PATH"). A folder or link in the wiki whose name names them, and which the erase doesn't empty, stays, and
+    the check after the erase then reads its name and reports the erase incomplete.
   - run beside a live Apolaki. VACUUM needs the database to itself: stop the scheduled jobs and the MCP server
     first (docs/STOPPING.md).
   - settle a licence question. Apolaki's licence carries the SAFE-AI module, whose memory-sovereignty clause says
@@ -144,6 +152,7 @@ import functools
 import hashlib
 import html
 import json
+import os
 import re
 import sqlite3
 import types
@@ -840,6 +849,7 @@ class Plan:
     triples: list[str] = field(default_factory=list)
     wiki_pages: list[dict] = field(default_factory=list)    # {"title", "action": "remove" | "rebuild"}
     wiki_files: list[dict] = field(default_factory=list)    # {"file", "action": "remove" | "rebuild", "title"}
+    wiki_folders: list[str] = field(default_factory=list)   # wiki folders the erase leaves empty, so removes (A4)
     beliefs: list[str] = field(default_factory=list)
     belief_log_lines: int = 0
     elsewhere: list[tuple[str, int]] = field(default_factory=list)
@@ -852,6 +862,7 @@ class Plan:
     schema: list[dict] = field(default_factory=list)        # {"type", "name", "where"}: schema objects that name them
     near: list[dict] = field(default_factory=list)          # {"word", "place", "text"}: kept, until a person rules
     hand_added: list[dict] = field(default_factory=list)    # {"kind", "name", "token"}: not Apolaki's, a person checks
+    unread_folders: list[str] = field(default_factory=list)  # folders under home it can't read: a person checks (A4)
     vec_tables: list[str] = field(default_factory=list)
     code: str = ""
 
@@ -866,8 +877,9 @@ class Plan:
         return sorted({n["word"] for n in self.near})
 
     def checks(self) -> list[str]:
-        """The --checked tokens the erase needs: one for each thing in the database Apolaki didn't create."""
-        return [h["token"] for h in self.hand_added]
+        """The --checked tokens the erase needs: one for each thing in the database Apolaki didn't create, and since
+        round A4 one for each folder under $APOLAKI_HOME the dry run couldn't read ("folder:PATH")."""
+        return [h["token"] for h in self.hand_added] + [FOLDER + d for d in self.unread_folders]
 
     def empty(self) -> bool:
         return not any(self.counts().values())
@@ -919,8 +931,17 @@ def _objects(con) -> set[tuple[str, str, str | None]]:
     return out
 
 
-# SQL as the definition comparison reads it: a string literal or a quoted name whole, a word, or any other character.
-_SQL_TOKEN = re.compile(r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]|\w+|\S""")
+# SQL as the definition comparison reads it: a comment whole ("--" to the end of its line, or "/*" to "*/" or to the end
+# of the text, as SQLite reads them), a string literal or a quoted name whole, a word, or any other character. Before
+# round A4 a comment was read character by character, so "-- note" before a table CHECK made the CHECK's item start with
+# "-", and a column added by hand named "-" hid the CHECK (round A3's verifier); a "(" or "," in a comment also counted.
+_SQL_TOKEN = re.compile(r"""--[^\n]*|/\*.*?(?:\*/|\Z)|'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]|\w+|\S""",
+                        re.S)
+
+
+def _is_comment(token: str) -> bool:
+    """Whether a token of _SQL_TOKEN is a comment (a quoted name or a literal starts with its quote, never so)."""
+    return token.startswith(("--", "/*"))
 
 
 def _definition(sql: str | None) -> tuple | None:
@@ -967,8 +988,11 @@ def _column_item(item: tuple, added: set[str]) -> bool:
     """Whether an item of a table's definition is the definition of one of the columns in added: its first token names
     one, and isn't a table constraint's word written unquoted (round A3: a column added by hand named "check" or
     "constraint" hid a table CHECK with base64 in it, since the CHECK's item starts with the column's name,
-    unquoted)."""
-    if not item or _unquoted(item[0]) not in added:
+    unquoted); and it holds no comment (round A4). A comment is schema text that can hold anything, and with comments
+    read whole a column named "-- note" and the comment -- note before a table CHECK would have hidden the CHECK the
+    same way, so an item with a comment anywhere in it always counts: the table's definition is listed (as before
+    round A4, when a comment's characters made such an item differ)."""
+    if not item or any(map(_is_comment, item)) or _unquoted(item[0]) not in added:
         return False
     return item[0].casefold() not in _CONSTRAINT_WORDS          # a quoted token keeps its quotes here, so never is one
 
@@ -1079,6 +1103,46 @@ def _unreadable_file(path: Path, e: UnicodeDecodeError) -> EraseUnreadable:
                            f"rewrites it as UTF-8, or removes what isn't, then runs the dry run again")
 
 
+# The --checked token's prefix for a folder the dry run couldn't read (round A4): "folder:exports/locked".
+FOLDER = "folder:"
+
+
+def _unread_folders(home: Path) -> list[Path]:
+    """Each folder under home (links not followed) that the dry run can't read (round A4): one whose entries can't be
+    listed (the walk skipped it without a word, so a file named for the person inside was never mentioned: round A3's
+    verifier), or one whose entries can be listed but not looked at (no search permission: the dry run stopped with a
+    Python error at the first). A folder inside one listed so isn't listed again. What such a folder holds is unknown,
+    so the erase refuses until a person has checked it and names it with --checked ("folder:PATH")."""
+    out: set[Path] = set()
+
+    def failed(e: OSError) -> None:
+        out.add(Path(e.filename))
+    for top, dirs, files in os.walk(home, onerror=failed):
+        for name in dirs + files:
+            try:
+                os.lstat(os.path.join(top, name))
+            except OSError:
+                out.add(Path(top))
+                break
+    return sorted(d for d in out if d != home and not any(a in out for a in d.parents))
+
+
+def _emptied_folders(wiki: Path, removed: set[Path]) -> list[Path]:
+    """The folders under wiki (not wiki itself) that hold nothing once the removed files are gone, deepest first, then
+    by path (round A4: the erase removed a page in a folder named for the person, left the folder, and still recorded
+    the erase verified). A folder that was empty before isn't one: the erase didn't empty it."""
+    gone, out = set(removed), []
+    folders = {a for f in removed for a in f.parents if wiki in a.parents}
+    for d in sorted(folders, key=lambda d: (-len(d.parts), str(d))):
+        try:
+            if all(e in gone for e in d.iterdir()):
+                gone.add(d)
+                out.append(d)
+        except OSError:                 # can't be listed: not removed (it is listed with the unread folders)
+            continue
+    return out
+
+
 def _entry_kind(f: Path) -> str | None:
     """What a path that isn't a file is, for the dry run, when nothing under it is listed in its place (round A3): a
     link to no file (dangling, or to a folder, which the walk doesn't follow), an empty folder, a folder that can't be
@@ -1095,11 +1159,15 @@ def _entry_kind(f: Path) -> str | None:
     return "not a regular file"
 
 
-def _list_named_entry(out: Plan, f: Path, shown: str, named: bool) -> None:
+# What an entry in a folder that can be listed but not entered is, for the dry run: it can't be looked at (round A4).
+_IN_UNREAD = "in a folder the dry run can't read"
+
+
+def _list_named_entry(out: Plan, f: Path, shown: str, named: bool, what: str | None = None) -> None:
     """A path under $APOLAKI_HOME that isn't a file, whose name, or a folder it is in, names the person (named): listed
-    in the dry run with what it is (_entry_kind), as a file named so is (round A3: only files were walked, so an empty
-    folder or a dangling link named for the person wasn't listed)."""
-    what = _entry_kind(f) if named else None
+    in the dry run with what it is (_entry_kind, or what), as a file named so is (round A3: only files were walked, so
+    an empty folder or a dangling link named for the person wasn't listed)."""
+    what = (what or _entry_kind(f)) if named else None
     if what:
         out.elsewhere.append((shown, 1))
         out.named_entries[shown] = what
@@ -1260,7 +1328,12 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
     if p["wiki"].is_dir():
         for f in sorted(p["wiki"].rglob("*")):
             rel = str(f.relative_to(p["wiki"]))
-            if not f.is_file():
+            try:
+                is_file = f.is_file()
+            except OSError:          # in a folder that can be listed but not entered: listed in unread_folders
+                _list_named_entry(out, f, "wiki/" + rel, named(rel.replace("_", " ")), _IN_UNREAD)
+                continue
+            if not is_file:
                 _list_named_entry(out, f, "wiki/" + rel, named(rel.replace("_", " ")))
                 continue
             text = f.read_text(encoding="utf-8", errors="ignore")
@@ -1273,6 +1346,8 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
             else:                 # a page the erase leaves alone: its name and text can still hold a near-match
                 nears += [({"file": "wiki/" + rel}, w, t) for t in (rel.replace("_", " "), text)
                           for w in _near_words(hit, loose, t)]
+        out.wiki_folders = [str(d.relative_to(p["wiki"]))
+                            for d in _emptied_folders(p["wiki"], {p["wiki"] / f["file"] for f in out.wiki_files})]
 
     try:
         rows = _read_rows(p["beliefs"])
@@ -1306,7 +1381,12 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
         if f in handled or p["wiki"] in f.parents:
             continue
         rel = str(f.relative_to(home))
-        if not f.is_file():
+        try:
+            is_file = f.is_file()
+        except OSError:              # in a folder that can be listed but not entered: listed in unread_folders
+            _list_named_entry(out, f, rel, named(rel), _IN_UNREAD)
+            continue
+        if not is_file:
             _list_named_entry(out, f, rel, named(rel))
             continue
         by_name = named(rel)          # its name, or a folder it is in, names the person (round A2)
@@ -1340,9 +1420,13 @@ def plan(name: str, aliases: tuple[str, ...] = (), home: Path | None = None) -> 
             out.elsewhere_near.append((rel, max(len(_near_in(hit, loose, t)) for t in texts)
                                        + len(_near_words(hit, loose, rel))))
 
+    # Any folder under $APOLAKI_HOME it can't read, named for the person or not: a person checks it (round A4).
+    out.unread_folders = [str(d.relative_to(home)) for d in _unread_folders(home)] if home.is_dir() else []
+
     ident = {"names": [_fold(n) for n in names], "memories": [m["id"] for m in out.memories],
              "entities": [e["id"] for e in out.entities], "mentions": out.mentions, "triples": out.triples,
-             "wiki_pages": out.wiki_pages, "wiki_files": out.wiki_files, "beliefs": out.beliefs,
+             "wiki_pages": out.wiki_pages, "wiki_files": out.wiki_files, "wiki_folders": out.wiki_folders,
+             "beliefs": out.beliefs,
              "belief_log_lines": out.belief_log_lines, "db_other": out.db_other, "schema": out.schema,
              "unreadable": out.unreadable, "hand_added": out.checks(),
              "near": sorted(json.dumps([n["word"], n["place"]], sort_keys=True, default=str) for n in out.near)}
@@ -1385,7 +1469,9 @@ def leftovers(names: list[str], home: Path, blobs: list[bytes] = (), others: tup
         edges, since the bytes around a column value are anything (the timestamp before archive_reason ends in a
         digit). A match is accepted only where kept data explains it (_explained_bytes): a near-match ruled someone
         else, in a kept row, or a chance match inside a kept vector. A longer word nobody ruled on explains nothing;
-      - the wiki folder (contents and file names) and the engine's belief files, with the full fold, escapes decoded;
+      - the wiki folder, with the full fold, escapes decoded: every file's contents, and since round A4 the name of
+        every entry in it (a folder or a link too: a folder named for the person outlived the erase, round A3's
+        verifier), and the engine's belief files;
       - a second dry run, which must find nothing to remove or refuse on, and no near-match nobody ruled on."""
     hit, loose = _matcher(names), _matcher(names, edges=False)
     ruled = {_fold(w) for w in others}
@@ -1414,14 +1500,21 @@ def leftovers(names: list[str], home: Path, blobs: list[bytes] = (), others: tup
         if any(b and b in raw for b in blobs):
             found.append(f"{f}: an erased embedding")
     files = [p["beliefs"], p["belief_log"]]
-    if p["wiki"].is_dir():
-        files += [f for f in sorted(p["wiki"].rglob("*")) if f.is_file()]
+    for f in sorted(p["wiki"].rglob("*")) if p["wiki"].is_dir() else []:
+        if _names_in(hit, f.name):
+            found.append(f"{f}: the name")
+            continue
+        try:
+            if f.is_file():
+                files.append(f)
+        except OSError:              # in a folder that can't be entered: the dry run lists it, and a person checked it
+            continue
     for f in files:
         try:
             text = f.read_text(encoding="utf-8", errors="ignore")
         except FileNotFoundError:
             continue
-        if _names_in(hit, text) or (p["wiki"] in f.parents and _names_in(hit, f.name)):
+        if _names_in(hit, text):
             found.append(f"{f}: the name")
     again = plan(names[0], tuple(names[1:]), home)
     if not again.empty():
@@ -1442,9 +1535,11 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
     erase refuses before changing anything. A near-match that is the person is given as an alias instead, which erases
     it. The ledger records each ruled near-match by where it is, never by the word, which contains the name.
 
-    checked is a person's word that they have checked, by hand, each table, column, view, trigger and definition the
-    plan lists as not Apolaki's (Plan.checks()) for the name in any form: the erase certifies only Apolaki's own schema
-    (round A). It must name each of them and nothing else, or the erase refuses before changing anything."""
+    checked is a person's word that they have checked, by hand, each table, column, index, view, trigger and
+    definition the plan lists as not Apolaki's for the name in any form: the erase certifies only Apolaki's own schema
+    (round A); and, since round A4, each folder under $APOLAKI_HOME the dry run couldn't read, for files that name the
+    person (Plan.checks()). It must name each of them and nothing else, or the erase refuses before changing
+    anything."""
     home = home or config.home()
     if not by.strip():
         raise EraseError("say who is erasing (by)")
@@ -1483,13 +1578,21 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
     given, wanted = {c.strip() for c in checked if c.strip()}, set(p.checks())
     if given - wanted:
         raise EraseError(f"--checked names {len(given - wanted)} thing(s) the dry run didn't list as added by hand "
-                         f"(each must be named exactly as the dry run prints it). Nothing was removed")
-    if wanted - given:
-        raise EraseError(f"the database holds {len(wanted - given)} thing(s) Apolaki didn't create, which nobody has "
-                         f"said they checked: {', '.join(sorted(wanted - given))}. This erase certifies only Apolaki's "
+                         f"or as a folder it couldn't read (each must be named exactly as the dry run prints it). "
+                         f"Nothing was removed")
+    unchecked = sorted(wanted - given)
+    tables = [t for t in unchecked if not t.startswith(FOLDER)]
+    if tables:
+        raise EraseError(f"the database holds {len(tables)} thing(s) Apolaki didn't create, which nobody has "
+                         f"said they checked: {', '.join(tables)}. This erase certifies only Apolaki's "
                          f"own tables: it reads the others too, but text can be stored there in ways it doesn't read. "
                          f"Nothing was removed. A person checks each by hand for the name in any form, deals with what "
                          f"they find, then names each with --checked, exactly as the dry run prints it")
+    if unchecked:
+        raise EraseError(f"the dry run couldn't read {len(unchecked)} folder(s) under {home}, which nobody has said "
+                         f"they checked: {', '.join(unchecked)}. What they hold is unknown, and could name the person. "
+                         f"Nothing was removed. A person checks each by hand for files that name the person, deals "
+                         f"with what they find, then names each with --checked, exactly as the dry run prints it")
     names = p.names
     hit, loose = _matcher(names), _matcher(names, edges=False)
     paths = _paths(home)
@@ -1520,6 +1623,7 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
             pages = types.SimpleNamespace(conn=con, wiki_path=paths["wiki"])
             for f in p.wiki_files:
                 (paths["wiki"] / f["file"]).unlink(missing_ok=True)
+            _remove_folders(paths["wiki"], p.wiki_folders)
             rebuild = {w["title"] for w in p.wiki_pages if w["action"] == "rebuild"}
             rebuild |= {f["title"] for f in p.wiki_files if f["action"] == "rebuild" and f["title"]}
             for title in sorted(rebuild):
@@ -1544,6 +1648,7 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
     else:                                    # no database: nothing to rebuild a page from
         for f in p.wiki_files:
             (paths["wiki"] / f["file"]).unlink(missing_ok=True)
+        _remove_folders(paths["wiki"], p.wiki_folders)
 
     if p.beliefs:
         rows = _read_rows(paths["beliefs"]) or []
@@ -1586,6 +1691,17 @@ def erase(name: str, aliases: tuple[str, ...] = (), confirm: str = "", by: str =
             "checked": p.checks(), "ledger": str(paths["ledger"])}
 
 
+def _remove_folders(wiki: Path, folders: list[str]) -> None:
+    """Remove the wiki folders the plan says its removals leave empty (Plan.wiki_folders, deepest first). One that
+    isn't empty any more (something was added since the dry run) stays; if its name names the person, the check after
+    the erase reads it there, and the erase is incomplete."""
+    for d in folders:
+        try:
+            (wiki / d).rmdir()
+        except OSError:
+            continue
+
+
 def _redacted_line(line: str, hit: re.Pattern) -> str:
     """A belief-log line with every string that names the person replaced (_redact); a line that isn't JSON goes
     whole."""
@@ -1611,8 +1727,8 @@ def describe(p: Plan) -> str:
     lines = [f"Erase {' / '.join(repr(n) for n in p.names)}: a dry run. Nothing has been changed."]
     if p.empty():
         lines.append("Apolaki's memory holds nothing under these names" + (
-            " in its own tables; what was added by hand (below) is for a person to check." if p.hand_added
-            else "."))
+            " in its own tables; what was added by hand, or couldn't be read (below), is for a person to check."
+            if p.hand_added or p.unread_folders else "."))
     if p.memories:
         lines.append(f"\nMemories that go whole ({len(p.memories)}), with their embeddings:")
         lines += [f"  {m['id'][:8]}{' (archived)' if m['archived'] else ''}: {' '.join(m['text'].split())[:110]}"
@@ -1626,6 +1742,7 @@ def describe(p: Plan) -> str:
         lines.append("\nWiki:")
         lines += [f"  page {w['title']!r}: {w['action']}" for w in p.wiki_pages]
         lines += [f"  file {f['file']}: {f['action']}" for f in p.wiki_files]
+        lines += [f"  folder {d}: removed, since the files above leave it empty" for d in p.wiki_folders]
     if p.beliefs or p.belief_log_lines:
         lines.append(f"\nEngine beliefs: {len(p.beliefs)} removed; {p.belief_log_lines} belief-log line(s) redacted")
     if p.vec_tables:
@@ -1653,6 +1770,11 @@ def describe(p: Plan) -> str:
                      f"for what its expression and WHERE hold; a view or trigger for what it reads, and a trigger for "
                      f"what it copies when the erase deletes rows), and names each with --checked:")
         lines += [f"  {h['kind']} {h['name']!r}: --checked {h['token']!r}" for h in p.hand_added]
+    if p.unread_folders:
+        lines.append(f"\nFolders under $APOLAKI_HOME this dry run can't read ({len(p.unread_folders)}): it can't list "
+                     f"what they hold, or can't look at it, so they could hold files that name the person. The erase "
+                     f"WILL REFUSE until a person has checked each by hand, and names each with --checked:")
+        lines += [f"  {d}: --checked {FOLDER + d!r}" for d in p.unread_folders]
     if p.near:
         lines.append(f"\nNear-matches ({len(p.near)}): the name inside a longer word, in what this erase keeps. The "
                      f"erase WILL REFUSE until a person rules on each word: someone else (--not-them WORD), or the "
@@ -1680,9 +1802,9 @@ def describe(p: Plan) -> str:
         aliases = "".join(f" --alias {a!r}" for a in p.names[1:])
         lines.append(f"\nTo erase exactly this: python -m apolaki.engine erase-person {p.names[0]!r}{aliases} "
                      f"--confirm {p.code} --by WHO --reason WHY")
-        if p.hand_added:
-            lines.append("  with, only once a person has checked each thing above that Apolaki didn't create: "
-                         + " ".join(f"--checked {t!r}" for t in p.checks()))
+        if p.checks():
+            lines.append("  with, only once a person has checked each thing above that Apolaki didn't create, or "
+                         "this dry run couldn't read: " + " ".join(f"--checked {t!r}" for t in p.checks()))
         if p.near:
             lines.append("  with, only if a person has read each near-match above and it is someone else: "
                          + " ".join(f"--not-them {w!r}" for w in p.near_words()))
